@@ -2,14 +2,14 @@
 targetScope = 'subscription'
 
 // Parameters
-param location string = 'westeurope'
-param resourceGroupName string = 'rg-uptime-kuma'
-param appServicePlanName string = 'asp-uptime-kuma'
+param location string = 'australiaeast'
+param resourceGroupName string = 'processpro-global'
+param appServicePlanName string = 'processpro-status'
 param appServicePlanSku string = 'B1'
 param appServicePlanTier string = 'Basic'
-param webAppName string = 'wapp-${uniqueString(subscription().id)}'
-param fileShareName string = 'fs-uptime-kuma'
-param storageName string = 'stuk${uniqueString(subscription().id)}'
+param webAppName string = 'processpro-status-page'
+param storageName string = 'processprostorage01'
+param fileShareName string = 'uptime-kuma'
 
 // Variables
 var dockerRegistryHost = 'docker.io'
