@@ -6,7 +6,7 @@ targetScope = 'resourceGroup'
 @maxLength(24)
 param storageName string = 'st${uniqueString(resourceGroup().id)}'
 
- @allowed([
+@allowed([
   'Standard_LRS'
   'Standard_GRS'
   'Standard_RAGRS'
@@ -19,7 +19,7 @@ param storageName string = 'st${uniqueString(resourceGroup().id)}'
 param storageSKU string = 'Standard_LRS'
 param location string = resourceGroup().location
 
-// Resources
+// Resources (idempotent: same name/RG updates an existing account)
 resource stg 'Microsoft.Storage/storageAccounts@2021-04-01' = {
   name: storageName
   location: location

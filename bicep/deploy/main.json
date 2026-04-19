@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "australiaeast"
+    },
+    "resourceGroupName": {
+      "value": "processpro-global"
+    },
+    "storageResourceGroupName": {
+      "value": "processpro-azure-global-resourcegroup"
+    },
+    "storageLocation": {
+      "value": "australiacentral"
+    },
+    "appServicePlanName": {
+      "value": "processpro-status"
+    },
+    "appServicePlanSku": {
+      "value": "B1"
+    },
+    "appServicePlanTier": {
+      "value": "Basic"
+    },
+    "webAppName": {
+      "value": "processpro-status-page"
+    },
+    "storageName": {
+      "value": "processprostorage01"
+    },
+    "fileShareName": {
+      "value": "processpro-status"
+    }
+  }
+}
