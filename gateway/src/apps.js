@@ -23,6 +23,50 @@ function listMonitoredApps() {
   ];
 }
 
+function acceptsStatus(statusCode, expect) {
+  if (statusCode >= 200 && statusCode < 300) {
+    return true;
+  }
+  if (expect === 'redirect-ok') {
+    return [301, 302, 303, 307, 308].includes(statusCode);
+  }
+  return false;
+}
+
+async function probeUrl(url, { expect = '2xx', timeoutMs = config.probeTimeoutMs } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'ProcessPro-Status/1.0',
+        Accept: 'text/html,application/xhtml+xml,application/json',
+      },
+    });
+    return {
+      ok: acceptsStatus(response.status, expect),
+      statusCode: response.status,
+      elapsedMs: Date.now() - started,
+      probedAt: new Date().toISOString(),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: null,
+      elapsedMs: Date.now() - started,
+      probedAt: new Date().toISOString(),
+      error: error.name === 'AbortError' ? 'timeout' : error.message,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function probeApp(app) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.probeTimeoutMs);
@@ -86,8 +130,10 @@ async function probeAllApps() {
 }
 
 module.exports = {
+  acceptsStatus,
   buildAppEntries,
   listMonitoredApps,
   probeAllApps,
   probeApp,
+  probeUrl,
 };
