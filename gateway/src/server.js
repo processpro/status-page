@@ -21,7 +21,7 @@ const {
   renderMonitorEditor,
 } = require('./pages');
 const { fetchKumaSnapshot, kumaMonitor } = require('./kuma');
-const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
+const { samplesForCatalog } = require('./kuma-stats');
 const { normalizeWindow, samplesFor } = require('./history');
 const { startScheduler } = require('./scheduler');
 const {
@@ -155,10 +155,20 @@ async function databaseMonitors(windowKey) {
   try {
     const snapshot = await fetchKumaSnapshot();
     const databases = snapshot.monitors.filter((monitor) => monitor.type === 'sqlserver');
-    try {
-      applyKumaSamples(databases, windowKey);
-    } catch (error) {
-      console.error('Kuma database history unavailable:', error.message);
+    const dir = dataDir();
+    for (const monitor of databases) {
+      const merged = new Map();
+      for (const sample of samplesFor(dir, `kuma-${monitor.id}`)) {
+        if (sample.t) {
+          merged.set(sample.t, sample);
+        }
+      }
+      for (const sample of monitor.samples || []) {
+        if (sample.t) {
+          merged.set(sample.t, sample);
+        }
+      }
+      monitor.samples = [...merged.values()].sort((left, right) => left.t - right.t);
     }
     return { snapshot, databases };
   } catch {

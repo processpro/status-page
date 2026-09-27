@@ -77,6 +77,40 @@ function recordSample(dataDir, monitorId, sample, now = Date.now()) {
   return job;
 }
 
+function recordMissing(dataDir, monitorId, samples, now = Date.now()) {
+  const job = writeQueue.then(() => {
+    const history = loadHistory(dataDir);
+    const existing = Array.isArray(history[monitorId]) ? history[monitorId] : [];
+    const seen = new Set(existing.map((sample) => sample.t));
+    let added = 0;
+    for (const sample of samples) {
+      if (!sample || !sample.t || seen.has(sample.t)) {
+        continue;
+      }
+      seen.add(sample.t);
+      existing.push({
+        t: sample.t,
+        ok: sample.ok ? 1 : 0,
+        ms: sample.ms ?? null,
+        code: sample.code ?? null,
+      });
+      added += 1;
+    }
+    if (!added) {
+      return existing;
+    }
+    existing.sort((left, right) => left.t - right.t);
+    history[monitorId] = prune(existing, now);
+    saveHistory(dataDir, history);
+    return history[monitorId];
+  });
+  writeQueue = job.then(
+    () => {},
+    () => {}
+  );
+  return job;
+}
+
 function dropSamples(dataDir, monitorId) {
   const job = writeQueue.then(() => {
     const history = loadHistory(dataDir);
@@ -162,6 +196,7 @@ module.exports = {
   WINDOWS,
   dropSamples,
   latestSample,
+  recordMissing,
   normalizeWindow,
   recordSample,
   samplesFor,

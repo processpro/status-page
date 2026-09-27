@@ -217,11 +217,14 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
       const view = series(monitor.samples || [], key, now);
       const latest = (monitor.samples || []).at(-1);
       const href = `/admin/kuma/${encodeURIComponent(monitor.id)}?window=${key}`;
+      const detail = !latest
+        ? 'No checks yet'
+        : `${latest.ms != null ? `${latest.ms}ms` : 'Checked'} · ${escapeHtml(new Date(latest.t).toISOString().slice(11, 19))} UTC`;
       return `<tr>
         <td><a href="${escapeHtml(href)}">${escapeHtml(monitor.name)}</a><div class="muted">${escapeHtml(monitor.groupName)} · Uptime Kuma</div></td>
         <td>${statusPill(latest ? Boolean(latest.ok) : false, !latest)}</td>
         <td>${renderBars(view)}<div class="muted">${escapeHtml(percentLabel(view.percent))}</div></td>
-        <td class="muted">Read only</td>
+        <td class="muted">${detail}</td>
         <td><a class="text-link" href="${escapeHtml(href)}">Details</a></td>
       </tr>`;
     })
@@ -307,7 +310,16 @@ function renderKumaHistoryPage({ email, monitor, windowKey }) {
     <section class="panel">
       <div class="panel-head"><h2>${statusPill(latest ? Boolean(latest.ok) : false, !latest)} ${escapeHtml(percentLabel(view.percent))}</h2></div>
       <div class="beats beats-large">${view.cells.map((cell) => `<i class="beat beat-${cell}"></i>`).join('')}</div>
-      <p class="muted">The public Kuma feed includes the recent checks. The 24 hour figure is ${monitor.uptime24 == null ? 'not reported' : `${Math.round(monitor.uptime24 * 1000) / 10}%`}.</p>
+      <p class="muted">Checks are kept for 8 days, the same as the instance bars. The 24 hour figure from Uptime Kuma is ${monitor.uptime24 == null ? 'not reported' : `${Math.round(monitor.uptime24 * 1000) / 10}%`}.</p>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Recent checks</h2></div>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Status</th><th>Detail</th></tr></thead><tbody>${
+        [...samples].slice(-24).reverse().map((sample) => {
+          const when = new Date(sample.t).toISOString().replace('T', ' ').slice(0, 19);
+          return `<tr><td>${escapeHtml(when)} UTC</td><td>${statusPill(Boolean(sample.ok), false)}</td><td class="muted">${sample.ms != null ? `${escapeHtml(sample.ms)}ms` : '—'}</td></tr>`;
+        }).join('') || '<tr><td colspan="3">No checks yet.</td></tr>'
+      }</tbody></table></div>
     </section>`;
   return renderShell({ title: monitor.name, active: 'admin', email, body });
 }

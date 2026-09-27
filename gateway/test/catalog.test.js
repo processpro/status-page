@@ -68,6 +68,24 @@ describe('monitor catalog and history', () => {
     assert.equal(getMonitor(created.id), null);
   });
 
+  it('keeps new database checks and ignores duplicates', async () => {
+    const dir = process.env.STATUS_DATA_DIR;
+    const { recordMissing, samplesFor } = require('../src/history');
+    const first = Date.parse('2026-09-27T20:00:00Z');
+    const second = first + 60 * 1000;
+    await recordMissing(dir, 'kuma-11', [
+      { t: first, ok: 1, ms: 20 },
+      { t: second, ok: 1, ms: 21 },
+    ]);
+    await recordMissing(dir, 'kuma-11', [
+      { t: second, ok: 1, ms: 21 },
+      { t: second + 60 * 1000, ok: 0, ms: 30 },
+    ]);
+    const samples = samplesFor(dir, 'kuma-11');
+    assert.deepEqual(samples.map((sample) => sample.t), [first, second, second + 60 * 1000]);
+    assert.equal(samples[2].ok, 0);
+  });
+
   it('keeps checks and only changes the visible window', async () => {
     const { recordSample, series } = require('../src/history');
     const dir = process.env.STATUS_DATA_DIR;

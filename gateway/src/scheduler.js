@@ -1,7 +1,8 @@
 'use strict';
 
 const { probeUrl } = require('./apps');
-const { recordSample } = require('./history');
+const { recordMissing, recordSample } = require('./history');
+const { fetchKumaSnapshot } = require('./kuma');
 const { dataDir, loadMonitors } = require('./store');
 
 let timer = null;
@@ -26,10 +27,19 @@ async function checkAll() {
         });
       })
     );
+    await recordDatabaseHeartbeats(now);
   } catch (error) {
     console.error('Status check failed:', error.message);
   } finally {
     running = false;
+  }
+}
+
+async function recordDatabaseHeartbeats(now) {
+  const snapshot = await fetchKumaSnapshot(now);
+  const databases = snapshot.monitors.filter((monitor) => monitor.type === 'sqlserver');
+  for (const monitor of databases) {
+    await recordMissing(dataDir(), `kuma-${monitor.id}`, monitor.samples || [], now);
   }
 }
 
