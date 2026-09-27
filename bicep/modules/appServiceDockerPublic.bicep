@@ -7,6 +7,40 @@ param location string = resourceGroup().location
 param appServicePlanId string
 param dockerRegistryHost string = 'mcr.microsoft.com' // use 'docker.io' for Docker hub
 param linuxFxVersion string = 'DOCKER|azuredocs/containerapps-helloworld:latest'
+param appSettings array = []
+param websitesPort string = ''
+param dockerRegistryServerUser string = ''
+@secure()
+param dockerRegistryServerPassword string = ''
+
+var baseAppSettings = [
+  {
+    name: 'DOCKER_REGISTRY_SERVER_URL'
+    value: 'https://${dockerRegistryHost}'
+  }
+  {
+    name: 'DOCKER_ENABLE_CI'
+    value: 'true'
+  }
+]
+
+var portSettings = empty(websitesPort) ? [] : [
+  {
+    name: 'WEBSITES_PORT'
+    value: websitesPort
+  }
+]
+
+var registryCredentialSettings = empty(dockerRegistryServerUser) ? [] : [
+  {
+    name: 'DOCKER_REGISTRY_SERVER_USERNAME'
+    value: dockerRegistryServerUser
+  }
+  {
+    name: 'DOCKER_REGISTRY_SERVER_PASSWORD'
+    value: dockerRegistryServerPassword
+  }
+]
 
 //Resources
 resource appService 'Microsoft.Web/sites@2020-06-01' = {
@@ -16,16 +50,7 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
     serverFarmId: appServicePlanId
     siteConfig: {
       linuxFxVersion: linuxFxVersion
-      appSettings: [
-        {
-          name: 'DOCKER_REGISTRY_SERVER_URL'
-          value: 'https://${dockerRegistryHost}'
-        }
-        {
-          name: 'DOCKER_ENABLE_CI'
-          value: 'true'
-        }
-      ]
+      appSettings: concat(baseAppSettings, portSettings, registryCredentialSettings, appSettings)
     }
   }
 }

@@ -1,0 +1,19 @@
+{
+  "name": "processpro-status-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Entra-protected /internal page in front of Uptime Kuma",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "express-openid-connect": "^2.17.1",
+    "http-proxy-middleware": "^3.0.3"
+  }
+}
