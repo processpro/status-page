@@ -11,15 +11,119 @@ const TABLE_BY_WINDOW = {
 
 let statCache = { key: '', value: null };
 let monitorCache = { at: 0, value: null };
+let mysqlPool = null;
 
 function dbPath() {
   if (process.env.KUMA_DB_PATH) {
     return process.env.KUMA_DB_PATH;
   }
+  // Prefer MySQL whenever it is configured. Never probe kuma.db on Azure Files
+  // in production — existsSync/sqlite on that share blocks the event loop.
+  if (process.env.UPTIME_KUMA_DB_HOSTNAME) {
+    return null;
+  }
   if (fs.existsSync('/app/data/kuma.db')) {
     return '/app/data/kuma.db';
   }
   return null;
+}
+
+function loadMysql() {
+  const paths = ['mysql2/promise', '/app/node_modules/mysql2/promise'];
+  for (const candidate of paths) {
+    try {
+      return require(candidate);
+    } catch {
+      // Try the next location. Production uses Kuma's bundled mysql2.
+    }
+  }
+  return null;
+}
+
+function mysqlSettings() {
+  const fromEnv = process.env.UPTIME_KUMA_DB_HOSTNAME;
+  if (fromEnv) {
+    const ssl = String(process.env.UPTIME_KUMA_DB_SSL || '').toLowerCase() === 'true';
+    const caFile = process.env.UPTIME_KUMA_DB_CA_FILE;
+    const settings = {
+      host: fromEnv,
+      port: Number(process.env.UPTIME_KUMA_DB_PORT || 3306),
+      user: process.env.UPTIME_KUMA_DB_USERNAME,
+      password: process.env.UPTIME_KUMA_DB_PASSWORD,
+      database: process.env.UPTIME_KUMA_DB_NAME || 'kuma',
+    };
+    if (ssl) {
+      settings.ssl = { rejectUnauthorized: true };
+      if (caFile && fs.existsSync(caFile)) {
+        settings.ssl.ca = fs.readFileSync(caFile, 'utf8');
+      }
+    }
+    return settings;
+  }
+  const configPath = '/app/data/db-config.json';
+  if (!fs.existsSync(configPath)) {
+    return null;
+  }
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (config.type !== 'mariadb' || !config.hostname) {
+      return null;
+    }
+    const settings = {
+      host: config.hostname,
+      port: Number(config.port || 3306),
+      user: config.username,
+      password: config.password,
+      database: config.dbName || config.database || 'kuma',
+    };
+    if (config.ssl) {
+      settings.ssl = { rejectUnauthorized: true };
+      if (config.ca) {
+        settings.ssl.ca = config.ca;
+      }
+    }
+    return settings;
+  } catch {
+    return null;
+  }
+}
+
+async function getMysqlPool() {
+  if (mysqlPool) {
+    return mysqlPool;
+  }
+  const mysql = loadMysql();
+  const settings = mysqlSettings();
+  if (!mysql || !settings) {
+    return null;
+  }
+  mysqlPool = mysql.createPool({
+    ...settings,
+    waitForConnections: true,
+    connectionLimit: 2,
+    enableKeepAlive: true,
+    connectTimeout: 4000,
+  });
+  return mysqlPool;
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+}
+
+async function queryMysql(sql, params = []) {
+  const pool = await getMysqlPool();
+  if (!pool) {
+    return [];
+  }
+  const [rows] = await withTimeout(pool.query(sql, params), 4000, 'MySQL query');
+  return rows || [];
 }
 
 function normalizeUrl(value) {
@@ -124,55 +228,45 @@ function heartbeatRows(file, ids, startSec) {
   });
 }
 
-function monitorUrls(now = Date.now()) {
+function indexMonitorUrls(rows) {
+  const index = new Map();
+  for (const row of rows) {
+    const key = normalizeUrl(row.url);
+    if (key && !index.has(key)) {
+      index.set(key, Number(row.id));
+    }
+  }
+  return index;
+}
+
+async function monitorUrls(now = Date.now()) {
   if (monitorCache.value && now - monitorCache.at < 60000) {
     return monitorCache.value;
   }
   const file = dbPath();
-  if (!file) {
-    return new Map();
-  }
-  const rows = queryRows(
-    file,
-    "SELECT id, url FROM monitor WHERE active = 1 AND url LIKE 'http%'",
-    ['id', 'url']
-  );
-    const index = new Map();
-    for (const row of rows) {
-      const key = normalizeUrl(row.url);
-      if (key && !index.has(key)) {
-        index.set(key, Number(row.id));
-      }
+  let rows = [];
+  if (file) {
+    rows = queryRows(
+      file,
+      "SELECT id, url FROM monitor WHERE active = 1 AND url LIKE 'http%'",
+      ['id', 'url']
+    );
+  } else {
+    try {
+      rows = await queryMysql(
+        "SELECT id, url FROM monitor WHERE active = 1 AND url LIKE 'http%'"
+      );
+    } catch (error) {
+      console.error('Kuma MySQL monitor lookup failed:', error.message);
+      rows = [];
     }
+  }
+  const index = indexMonitorUrls(rows);
   monitorCache = { at: now, value: index };
   return index;
 }
 
-function samplesByKumaId(monitorIds, windowKey, now = Date.now()) {
-  const key = normalizeWindow(windowKey);
-  const ids = [...new Set(monitorIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
-  if (!ids.length) {
-    return {};
-  }
-  const file = dbPath();
-  if (!file) {
-    return {};
-  }
-  const cacheKey = `${file}|${key}|${ids.slice().sort((a, b) => a - b).join(',')}|${Math.floor(now / 20000)}`;
-  if (statCache.key === cacheKey && statCache.value) {
-    return statCache.value;
-  }
-  const table = TABLE_BY_WINDOW[key];
-  const start = Math.floor((now - WINDOWS[key]) / 1000);
-  const list = ids.join(',');
-  let rows = queryRows(
-    file,
-    `SELECT monitor_id, timestamp, up, down, ping FROM ${table} WHERE monitor_id IN (${list}) AND timestamp >= ${start} ORDER BY timestamp`,
-    ['monitor_id', 'timestamp', 'up', 'down', 'ping']
-  );
-  if (!rows.length) {
-    rows = heartbeatRows(file, ids, start);
-  }
+function groupStatRows(ids, rows) {
   const grouped = {};
   for (const id of ids) {
     grouped[id] = [];
@@ -193,6 +287,80 @@ function samplesByKumaId(monitorIds, windowKey, now = Date.now()) {
       code: null,
     });
   }
+  return grouped;
+}
+
+async function mysqlHeartbeatRows(ids, startSec) {
+  const startIso = new Date(startSec * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const placeholders = ids.map(() => '?').join(',');
+  const raw = await queryMysql(
+    `SELECT monitor_id, time, status, ping FROM heartbeat WHERE monitor_id IN (${placeholders}) AND time >= ? ORDER BY time`,
+    [...ids, startIso]
+  );
+  return raw.flatMap((row) => {
+    const parsed = Date.parse(`${String(row.time).replace(' ', 'T').replace(/Z$/, '')}Z`);
+    if (Number.isNaN(parsed)) {
+      return [];
+    }
+    const up = row.status === 1 || row.status === 3 ? 1 : 0;
+    const down = row.status === 0 ? 1 : 0;
+    if (!up && !down) {
+      return [];
+    }
+    return [{
+      monitor_id: Number(row.monitor_id),
+      timestamp: Math.floor(parsed / 1000),
+      up,
+      down,
+      ping: row.ping,
+    }];
+  });
+}
+
+async function samplesByKumaId(monitorIds, windowKey, now = Date.now()) {
+  const key = normalizeWindow(windowKey);
+  const ids = [...new Set(monitorIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) {
+    return {};
+  }
+  const file = dbPath();
+  const source = file || process.env.UPTIME_KUMA_DB_HOSTNAME || 'mysql';
+  const cacheKey = `${source}|${key}|${ids.slice().sort((a, b) => a - b).join(',')}|${Math.floor(now / 20000)}`;
+  if (statCache.key === cacheKey && statCache.value) {
+    return statCache.value;
+  }
+  const table = TABLE_BY_WINDOW[key];
+  if (!table) {
+    return {};
+  }
+  const start = Math.floor((now - WINDOWS[key]) / 1000);
+  let rows = [];
+  if (file) {
+    const list = ids.join(',');
+    rows = queryRows(
+      file,
+      `SELECT monitor_id, timestamp, up, down, ping FROM ${table} WHERE monitor_id IN (${list}) AND timestamp >= ${start} ORDER BY timestamp`,
+      ['monitor_id', 'timestamp', 'up', 'down', 'ping']
+    );
+    if (!rows.length) {
+      rows = heartbeatRows(file, ids, start);
+    }
+  } else {
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      rows = await queryMysql(
+        `SELECT monitor_id, timestamp, up, down, ping FROM ${table} WHERE monitor_id IN (${placeholders}) AND timestamp >= ? ORDER BY timestamp`,
+        [...ids, start]
+      );
+      if (!rows.length) {
+        rows = await mysqlHeartbeatRows(ids, start);
+      }
+    } catch (error) {
+      console.error('Kuma MySQL history unavailable:', error.message);
+      rows = [];
+    }
+  }
+  const grouped = groupStatRows(ids, rows);
   statCache = { key: cacheKey, value: grouped };
   return grouped;
 }
@@ -212,8 +380,8 @@ function describeKumaHistory() {
   console.log(`Kuma history tables: minutely ${row.minutely}, hourly ${row.hourly}, minute range ${row.minute_min} to ${row.minute_max}`);
 }
 
-function samplesForCatalog(monitors, windowKey, now = Date.now()) {
-  const index = monitorUrls(now);
+async function samplesForCatalog(monitors, windowKey, now = Date.now()) {
+  const index = await monitorUrls(now);
   const pairs = [];
   for (const monitor of monitors) {
     const kumaId = index.get(normalizeUrl(monitor.url));
@@ -221,7 +389,7 @@ function samplesForCatalog(monitors, windowKey, now = Date.now()) {
       pairs.push([monitor.id, kumaId]);
     }
   }
-  const stats = samplesByKumaId(pairs.map((pair) => pair[1]), windowKey, now);
+  const stats = await samplesByKumaId(pairs.map((pair) => pair[1]), windowKey, now);
   const result = {};
   for (const [catalogId, kumaId] of pairs) {
     result[catalogId] = stats[kumaId] || [];
@@ -229,8 +397,8 @@ function samplesForCatalog(monitors, windowKey, now = Date.now()) {
   return result;
 }
 
-function applyKumaSamples(monitors, windowKey, now = Date.now()) {
-  const stats = samplesByKumaId(monitors.map((monitor) => monitor.id), windowKey, now);
+async function applyKumaSamples(monitors, windowKey, now = Date.now()) {
+  const stats = await samplesByKumaId(monitors.map((monitor) => monitor.id), windowKey, now);
   for (const monitor of monitors) {
     const samples = stats[Number(monitor.id)];
     if (samples && samples.length) {

@@ -1,4 +1,5 @@
-FROM louislam/uptime-kuma:latest
+# `:latest` is Uptime Kuma v1 (SQLite only). MariaDB/MySQL needs v2.
+FROM louislam/uptime-kuma:2
 
 USER root
 

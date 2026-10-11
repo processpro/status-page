@@ -21,12 +21,11 @@ const {
   renderMonitorEditor,
 } = require('./pages');
 const { fetchKumaSnapshot, kumaMonitor } = require('./kuma');
-const { samplesForCatalog } = require('./kuma-stats');
-const { normalizeWindow, samplesFor } = require('./history');
+const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
+const { normalizeWindow } = require('./history');
 const { startScheduler } = require('./scheduler');
 const {
   createMonitor,
-  dataDir,
   deleteMonitor,
   getMonitor,
   loadMonitors,
@@ -55,13 +54,7 @@ function createKumaProxy() {
   });
 }
 
-function createApp() {
-  const app = express();
-  app.disable('x-powered-by');
-  const kumaProxy = config.internalOnly ? null : createKumaProxy();
-
-  app.use(express.urlencoded({ extended: false }));
-
+function mountHealth(app) {
   app.get('/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -69,6 +62,13 @@ function createApp() {
       internalAuthConfigured: isAuthConfigured() || config.authDisabled,
     });
   });
+}
+
+function mountAppRoutes(app) {
+  const kumaProxy = config.internalOnly ? null : createKumaProxy();
+  app.locals.kumaProxy = kumaProxy;
+
+  app.use(express.urlencoded({ extended: false }));
 
   app.use(
     '/internal/assets',
@@ -86,6 +86,7 @@ function createApp() {
         authRequired: false,
         auth0Logout: false,
         idpLogout: true,
+        attemptSilentLogin: false,
         secret: config.sessionSecret,
         baseURL: config.baseUrl,
         clientID: config.azureAd.clientId,
@@ -127,19 +128,30 @@ function createApp() {
       );
     });
   }
+}
 
-  app.locals.kumaProxy = kumaProxy;
+function createApp() {
+  const app = express();
+  app.disable('x-powered-by');
+  mountHealth(app);
+  mountAppRoutes(app);
   return app;
 }
 
-function samplesByMonitor(monitors, windowKey) {
-  const dir = dataDir();
+function withTimeout(promise, ms, fallback) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    }),
+  ]);
+}
+
+async function samplesByMonitor(monitors, windowKey) {
   const samplesById = {};
-  for (const monitor of monitors) {
-    samplesById[monitor.id] = samplesFor(dir, monitor.id);
-  }
   try {
-    const fromKuma = samplesForCatalog(monitors, windowKey);
+    const fromKuma = await withTimeout(samplesForCatalog(monitors, windowKey), 4000, {});
     for (const [id, samples] of Object.entries(fromKuma)) {
       if (samples.length) {
         samplesById[id] = samples;
@@ -153,23 +165,9 @@ function samplesByMonitor(monitors, windowKey) {
 
 async function databaseMonitors(windowKey) {
   try {
-    const snapshot = await fetchKumaSnapshot();
+    const snapshot = await withTimeout(fetchKumaSnapshot(), 4000, { monitors: [] });
     const databases = snapshot.monitors.filter((monitor) => monitor.type === 'sqlserver');
-    const dir = dataDir();
-    for (const monitor of databases) {
-      const merged = new Map();
-      for (const sample of samplesFor(dir, `kuma-${monitor.id}`)) {
-        if (sample.t) {
-          merged.set(sample.t, sample);
-        }
-      }
-      for (const sample of monitor.samples || []) {
-        if (sample.t) {
-          merged.set(sample.t, sample);
-        }
-      }
-      monitor.samples = [...merged.values()].sort((left, right) => left.t - right.t);
-    }
+    await withTimeout(applyKumaSamples(databases, windowKey), 4000, databases);
     return { snapshot, databases };
   } catch {
     return { snapshot: { monitors: [] }, databases: [] };
@@ -196,30 +194,31 @@ function mountStaffRoutes(app, { enforceAuth }) {
 
   const staff = [guard, ensureStaff];
 
-  app.get(['/internal', '/internal/'], ...staff, (req, res) => {
+  app.get(['/internal', '/internal/'], ...staff, async (req, res) => {
     const monitors = loadMonitors();
     const windowKey = normalizeWindow(req.query.window);
     res.type('html').send(
       renderInternalPage({
         email: req.staffEmail,
         monitors,
-        samplesById: samplesByMonitor(monitors, windowKey),
+        samplesById: await samplesByMonitor(monitors, windowKey),
         windowKey,
       })
     );
   });
 
-  app.get('/internal/monitors/:id', ...staff, (req, res) => {
+  app.get('/internal/monitors/:id', ...staff, async (req, res) => {
     const monitor = getMonitor(req.params.id);
     if (!monitor) {
       return res.status(404).type('text').send('Monitor not found');
     }
     const windowKey = normalizeWindow(req.query.window);
+    const samplesById = await samplesByMonitor([monitor], windowKey);
     return res.type('html').send(
       renderHistoryPage({
         email: req.staffEmail,
         monitor,
-        samples: samplesByMonitor([monitor], windowKey)[monitor.id] || [],
+        samples: samplesById[monitor.id] || [],
         windowKey,
         mode: 'internal',
       })
@@ -234,7 +233,7 @@ function mountStaffRoutes(app, { enforceAuth }) {
       renderAdminPage({
         email: req.staffEmail,
         monitors,
-        samplesById: samplesByMonitor(monitors, windowKey),
+        samplesById: await samplesByMonitor(monitors, windowKey),
         databases,
         windowKey,
         notice: req.query.notice || '',
@@ -257,17 +256,18 @@ function mountStaffRoutes(app, { enforceAuth }) {
     }
   });
 
-  app.get('/admin/monitors/:id', ...staff, (req, res) => {
+  app.get('/admin/monitors/:id', ...staff, async (req, res) => {
     const monitor = getMonitor(req.params.id);
     if (!monitor) {
       return res.status(404).type('text').send('Monitor not found');
     }
     const windowKey = normalizeWindow(req.query.window);
+    const samplesById = await samplesByMonitor([monitor], windowKey);
     return res.type('html').send(
       renderHistoryPage({
         email: req.staffEmail,
         monitor,
-        samples: samplesByMonitor([monitor], windowKey)[monitor.id] || [],
+        samples: samplesById[monitor.id] || [],
         windowKey,
         mode: 'admin',
       })
@@ -315,9 +315,16 @@ function mountStaffRoutes(app, { enforceAuth }) {
 }
 
 function start() {
-  loadMonitors();
-  startScheduler();
-  const app = createApp();
+  process.on('unhandledRejection', (reason) => {
+    console.error('unhandledRejection', reason);
+  });
+  process.on('uncaughtException', (error) => {
+    console.error('uncaughtException', error);
+  });
+
+  const app = express();
+  app.disable('x-powered-by');
+  mountHealth(app);
   const server = app.listen(config.port, () => {
     // eslint-disable-next-line no-console
     console.log(
@@ -325,10 +332,23 @@ function start() {
     );
   });
 
+  try {
+    loadMonitors();
+  } catch (error) {
+    console.error('Failed to load monitor catalog:', error.message);
+  }
+  startScheduler();
+  mountAppRoutes(app);
+
   const kumaProxy = app.locals.kumaProxy;
   if (kumaProxy && typeof kumaProxy.upgrade === 'function') {
     server.on('upgrade', (req, socket, head) => {
-      if (req.url && req.url.startsWith('/internal')) {
+      const url = req.url || '';
+      if (
+        url.startsWith('/internal') ||
+        url.startsWith('/admin') ||
+        url.startsWith('/health')
+      ) {
         socket.destroy();
         return;
       }

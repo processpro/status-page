@@ -240,6 +240,7 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
       <div class="head-actions">
         ${windowLinks(`/admin`, key)}
         <a class="pp-button" href="/admin/monitors/new">Add monitor</a>
+        <a class="pp-button pp-button-ghost" href="/dashboard">Kuma dashboard</a>
       </div>
     </div>
     ${ourSections}

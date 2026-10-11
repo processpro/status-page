@@ -37,13 +37,13 @@ describe('kuma history windows', () => {
     delete require.cache[require.resolve('../src/kuma-stats')];
   });
 
-  it('uses a different span for 1 hour, 24 hours, and 7 days', () => {
+  it('uses a different span for 1 hour, 24 hours, and 7 days', async () => {
     const { samplesForCatalog } = require('../src/kuma-stats');
     const monitors = [{ id: 'pub-au', url: 'https://au.processpro.io/kuma/' }];
     const now = Date.parse('2026-09-27T09:00:00Z');
-    const hour = samplesForCatalog(monitors, '1h', now)['pub-au'];
-    const day = samplesForCatalog(monitors, '24h', now)['pub-au'];
-    const week = samplesForCatalog(monitors, '7d', now)['pub-au'];
+    const hour = (await samplesForCatalog(monitors, '1h', now))['pub-au'];
+    const day = (await samplesForCatalog(monitors, '24h', now))['pub-au'];
+    const week = (await samplesForCatalog(monitors, '7d', now))['pub-au'];
     const hourView = series(hour, '1h', now);
     const dayView = series(day, '24h', now);
     const weekView = series(week, '7d', now);

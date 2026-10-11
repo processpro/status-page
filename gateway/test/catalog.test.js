@@ -71,7 +71,7 @@ describe('monitor catalog and history', () => {
   it('keeps new database checks and ignores duplicates', async () => {
     const dir = process.env.STATUS_DATA_DIR;
     const { recordMissing, samplesFor } = require('../src/history');
-    const first = Date.parse('2026-09-27T20:00:00Z');
+    const first = Date.now() - 3 * 60 * 1000;
     const second = first + 60 * 1000;
     await recordMissing(dir, 'kuma-11', [
       { t: first, ok: 1, ms: 20 },
