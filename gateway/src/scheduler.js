@@ -8,6 +8,17 @@ const { dataDir, loadMonitors } = require('./store');
 let timer = null;
 let running = false;
 
+async function probeAndRecord(monitor, now = Date.now()) {
+  const result = await probeUrl(monitor.url, { expect: monitor.expect });
+  await recordSample(dataDir(), monitor.id, {
+    t: now,
+    ok: result.ok,
+    ms: result.elapsedMs,
+    code: result.statusCode,
+  });
+  return result;
+}
+
 async function checkAll() {
   if (running) {
     return;
@@ -16,17 +27,7 @@ async function checkAll() {
   const now = Date.now();
   try {
     const monitors = loadMonitors().filter((monitor) => monitor.enabled);
-    await Promise.all(
-      monitors.map(async (monitor) => {
-        const result = await probeUrl(monitor.url, { expect: monitor.expect });
-        await recordSample(dataDir(), monitor.id, {
-          t: now,
-          ok: result.ok,
-          ms: result.elapsedMs,
-          code: result.statusCode,
-        });
-      })
-    );
+    await Promise.all(monitors.map((monitor) => probeAndRecord(monitor, now)));
     await recordDatabaseHeartbeats(now);
   } catch (error) {
     console.error('Status check failed:', error.message);
@@ -63,6 +64,7 @@ function stopScheduler() {
 
 module.exports = {
   checkAll,
+  probeAndRecord,
   startScheduler,
   stopScheduler,
 };

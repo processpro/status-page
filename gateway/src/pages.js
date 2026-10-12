@@ -235,7 +235,7 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
     <div class="page-head">
       <div>
         <h1>Admin</h1>
-        <p class="lede">Public and internal monitors on one screen. ${escapeHtml(windowCaption(windowKey))} Changing the window does not delete anything.</p>
+        <p class="lede">Public and internal monitors on one screen. Add a login URL yourself for demo, Australia, or Europe West instances. ${escapeHtml(windowCaption(windowKey))} Changing the window does not delete anything.</p>
       </div>
       <div class="head-actions">
         ${windowLinks(`/admin`, key)}
@@ -377,7 +377,7 @@ function renderMonitorEditor({ email, monitor, error }) {
       <div>
         <p class="eyebrow"><a class="text-link" href="/admin">Back</a></p>
         <h1>${monitor && monitor.id ? 'Edit monitor' : 'Add monitor'}</h1>
-        <p class="lede">Use Australia, Demo, Europe, Canada, or the United States when a single app moves. Mark audience as public only for shared services.</p>
+        <p class="lede">Use Australia, Demo, Europe, Europe West, Canada, or the United States when a single app moves. The first check runs as soon as you save. Mark audience as public only for shared services.</p>
       </div>
     </div>
     <section class="panel">${renderMonitorForm(monitor, error)}</section>`;

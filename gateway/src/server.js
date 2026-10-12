@@ -22,10 +22,11 @@ const {
 } = require('./pages');
 const { fetchKumaSnapshot, kumaMonitor } = require('./kuma');
 const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
-const { normalizeWindow } = require('./history');
-const { startScheduler } = require('./scheduler');
+const { normalizeWindow, samplesFromMemory } = require('./history');
+const { probeAndRecord, startScheduler } = require('./scheduler');
 const {
   createMonitor,
+  dataDir,
   deleteMonitor,
   getMonitor,
   loadMonitors,
@@ -160,6 +161,16 @@ async function samplesByMonitor(monitors, windowKey) {
   } catch (error) {
     console.error('Kuma history unavailable:', error.message);
   }
+  const dir = dataDir();
+  for (const monitor of monitors) {
+    if (samplesById[monitor.id]?.length) {
+      continue;
+    }
+    const local = samplesFromMemory(dir, monitor.id);
+    if (local.length) {
+      samplesById[monitor.id] = local;
+    }
+  }
   return samplesById;
 }
 
@@ -245,9 +256,14 @@ function mountStaffRoutes(app, { enforceAuth }) {
     res.type('html').send(renderMonitorEditor({ email: req.staffEmail, monitor: null, error: '' }));
   });
 
-  app.post('/admin/monitors', ...staff, (req, res) => {
+  app.post('/admin/monitors', ...staff, async (req, res) => {
     try {
-      createMonitor(req.body);
+      const monitor = createMonitor(req.body);
+      try {
+        await probeAndRecord(monitor);
+      } catch (error) {
+        console.error('First check failed:', error.message);
+      }
       return res.redirect('/admin?notice=Monitor%20added');
     } catch (error) {
       return res.status(400).type('html').send(

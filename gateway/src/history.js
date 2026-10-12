@@ -55,20 +55,50 @@ function prune(samples, now) {
 }
 
 let writeQueue = Promise.resolve();
+const memory = Object.create(null);
+
+function persistHistoryFiles() {
+  if (process.env.STATUS_PERSIST_HISTORY === 'false') {
+    return false;
+  }
+  if (process.env.STATUS_PERSIST_HISTORY === 'true') {
+    return true;
+  }
+  return Boolean(process.env.STATUS_DATA_DIR);
+}
+
+function memoryKey(dataDir, monitorId) {
+  return `${dataDir}::${monitorId}`;
+}
+
+function samplesFromMemory(dataDir, monitorId) {
+  const samples = memory[memoryKey(dataDir, monitorId)];
+  return Array.isArray(samples) ? samples.slice() : [];
+}
+
+function remember(dataDir, monitorId, samples) {
+  memory[memoryKey(dataDir, monitorId)] = Array.isArray(samples) ? samples.slice() : [];
+  return memory[memoryKey(dataDir, monitorId)];
+}
 
 function recordSample(dataDir, monitorId, sample, now = Date.now()) {
+  const existing = samplesFromMemory(dataDir, monitorId);
+  existing.push({
+    t: sample.t || now,
+    ok: sample.ok ? 1 : 0,
+    ms: sample.ms ?? null,
+    code: sample.code ?? null,
+  });
+  const next = prune(existing, now);
+  remember(dataDir, monitorId, next);
+  if (!persistHistoryFiles()) {
+    return Promise.resolve(next);
+  }
   const job = writeQueue.then(() => {
     const history = loadHistory(dataDir);
-    const existing = Array.isArray(history[monitorId]) ? history[monitorId] : [];
-    existing.push({
-      t: sample.t || now,
-      ok: sample.ok ? 1 : 0,
-      ms: sample.ms ?? null,
-      code: sample.code ?? null,
-    });
-    history[monitorId] = prune(existing, now);
+    history[monitorId] = next;
     saveHistory(dataDir, history);
-    return history[monitorId];
+    return next;
   });
   writeQueue = job.then(
     () => {},
@@ -112,6 +142,10 @@ function recordMissing(dataDir, monitorId, samples, now = Date.now()) {
 }
 
 function dropSamples(dataDir, monitorId) {
+  delete memory[memoryKey(dataDir, monitorId)];
+  if (!persistHistoryFiles()) {
+    return Promise.resolve();
+  }
   const job = writeQueue.then(() => {
     const history = loadHistory(dataDir);
     if (!Object.prototype.hasOwnProperty.call(history, monitorId)) {
@@ -128,6 +162,13 @@ function dropSamples(dataDir, monitorId) {
 }
 
 function samplesFor(dataDir, monitorId) {
+  const cached = samplesFromMemory(dataDir, monitorId);
+  if (cached.length) {
+    return cached;
+  }
+  if (!persistHistoryFiles()) {
+    return [];
+  }
   const history = loadHistory(dataDir);
   return Array.isArray(history[monitorId]) ? history[monitorId] : [];
 }
@@ -200,5 +241,6 @@ module.exports = {
   normalizeWindow,
   recordSample,
   samplesFor,
+  samplesFromMemory,
   series,
 };

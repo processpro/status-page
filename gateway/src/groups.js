@@ -32,6 +32,12 @@ const GROUPS = [
     visibility: 'internal',
   },
   {
+    id: 'europe-west',
+    label: 'Europe West',
+    hint: 'West Europe app service',
+    visibility: 'internal',
+  },
+  {
     id: 'canada',
     label: 'Canada',
     hint: 'pp-ca',

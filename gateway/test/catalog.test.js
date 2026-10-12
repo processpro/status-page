@@ -43,6 +43,21 @@ describe('monitor catalog and history', () => {
     assert.equal(samplesFor(dir, 'pub-conductor').length, 0);
   });
 
+  it('shows a newly added check from memory before Kuma has history', async () => {
+    const dir = process.env.STATUS_DATA_DIR;
+    const { recordSample, samplesFromMemory } = require('../src/history');
+    await recordSample(dir, 'demo-development-izb9', {
+      t: Date.now(),
+      ok: 1,
+      ms: 18,
+      code: 200,
+    });
+    const samples = samplesFromMemory(dir, 'demo-development-izb9');
+    assert.equal(samples.length, 1);
+    assert.equal(samples[0].ok, 1);
+    assert.equal(samples[0].code, 200);
+  });
+
   it('adds, edits, and removes a monitor', () => {
     const { createMonitor, updateMonitor, deleteMonitor, getMonitor, loadMonitors } = require('../src/store');
     loadMonitors();
@@ -64,6 +79,16 @@ describe('monitor catalog and history', () => {
       enabled: 'on',
     });
     assert.equal(getMonitor(created.id).group, 'europe');
+    const west = createMonitor({
+      name: 'WEU tenant',
+      url: 'https://nexperia.processpro.io/Account/Login',
+      group: 'europe-west',
+      visibility: 'internal',
+      expect: 'redirect-ok',
+      enabled: 'on',
+    });
+    assert.equal(getMonitor(west.id).group, 'europe-west');
+    assert.equal(deleteMonitor(west.id), true);
     assert.equal(deleteMonitor(created.id), true);
     assert.equal(getMonitor(created.id), null);
   });
