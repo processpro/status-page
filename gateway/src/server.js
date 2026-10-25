@@ -15,12 +15,20 @@ const {
 } = require('./render');
 const {
   renderAdminPage,
+  renderConnectionsPage,
   renderHistoryPage,
   renderInternalPage,
   renderKumaHistoryPage,
   renderMonitorEditor,
 } = require('./pages');
 const { fetchKumaSnapshot, kumaMonitor } = require('./kuma');
+const { addSite, listSites, removeSite } = require('./sites');
+const {
+  authenticateConnection,
+  createConnection,
+  listConnections,
+  revokeConnection,
+} = require('./tokens');
 const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
 const { normalizeWindow, samplesFromMemory } = require('./history');
 const { probeAndRecord, startScheduler } = require('./scheduler');
@@ -55,6 +63,84 @@ function createKumaProxy() {
   });
 }
 
+function isGatewayPath(pathname) {
+  return pathname === '/health'
+    || pathname.startsWith('/internal')
+    || pathname.startsWith('/admin')
+    || pathname === '/api/sites'
+    || pathname.startsWith('/api/sites/');
+}
+
+async function kumaMonitors() {
+  try {
+    const snapshot = await fetchKumaSnapshot();
+    return snapshot.monitors || [];
+  } catch {
+    return [];
+  }
+}
+
+function mountSiteApi(app) {
+  const router = express.Router();
+  router.use(express.json({ limit: '20kb' }));
+
+  router.use((req, res, next) => {
+    const header = req.get('authorization') || '';
+    if (!header) {
+      return res.status(401).json({ title: 'A bearer token is required.' });
+    }
+    const match = /^Bearer\s+(\S+)\s*$/i.exec(header);
+    if (!match) {
+      return res.status(401).json({ title: 'Bearer token was rejected.' });
+    }
+    const agent = authenticateConnection(match[1]);
+    if (!agent) {
+      return res.status(401).json({ title: 'Bearer token was rejected.' });
+    }
+    req.agent = agent;
+    return next();
+  });
+
+  router.get('/', async (_req, res) => {
+    res.json(listSites(await kumaMonitors()));
+  });
+
+  router.post('/', async (req, res) => {
+    const result = addSite(req.body || {}, await kumaMonitors());
+    if (result.status === 'invalid') {
+      return res.status(400).json({ title: result.title });
+    }
+    if (result.status === 'conflict') {
+      return res.status(409).json({ title: result.title, ...result.site });
+    }
+    const created = loadMonitors().find((monitor) => monitor.name === result.site.name && monitor.enabled !== false);
+    if (created) {
+      try {
+        await probeAndRecord(created);
+      } catch (error) {
+        console.error('First check failed:', error.message);
+      }
+    }
+    return res.status(201).json(result.site);
+  });
+
+  router.delete('/:name', async (req, res) => {
+    const result = removeSite(req.params.name, await kumaMonitors());
+    if (result.status === 'invalid') {
+      return res.status(400).json({ title: result.title });
+    }
+    if (result.status === 'missing') {
+      return res.status(404).json({ title: result.title });
+    }
+    if (result.status === 'kuma') {
+      return res.status(409).json({ title: result.title, ...result.site });
+    }
+    return res.status(204).end();
+  });
+
+  app.use('/api/sites', router);
+}
+
 function mountHealth(app) {
   app.get('/health', (_req, res) => {
     res.json({
@@ -70,6 +156,7 @@ function mountAppRoutes(app) {
   app.locals.kumaProxy = kumaProxy;
 
   app.use(express.urlencoded({ extended: false }));
+  mountSiteApi(app);
 
   app.use(
     '/internal/assets',
@@ -113,11 +200,7 @@ function mountAppRoutes(app) {
 
   if (kumaProxy) {
     app.use((req, res, next) => {
-      if (
-        req.path === '/health' ||
-        req.path.startsWith('/internal') ||
-        req.path.startsWith('/admin')
-      ) {
+      if (isGatewayPath(req.path)) {
         return next();
       }
       return kumaProxy(req, res, next);
@@ -313,6 +396,37 @@ function mountStaffRoutes(app, { enforceAuth }) {
     return res.redirect('/admin?notice=Monitor%20removed');
   });
 
+  app.get('/admin/connections', ...staff, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(renderConnectionsPage({
+      email: req.staffEmail,
+      connections: listConnections(),
+    }));
+  });
+
+  app.post('/admin/connections', ...staff, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const issued = createConnection(req.body.agentName, req.staffEmail);
+      return res.type('html').send(renderConnectionsPage({
+        email: req.staffEmail,
+        connections: listConnections(),
+        issued,
+      }));
+    } catch (error) {
+      return res.status(400).type('html').send(renderConnectionsPage({
+        email: req.staffEmail,
+        connections: listConnections(),
+        error: error.message,
+      }));
+    }
+  });
+
+  app.post('/admin/connections/:id/revoke', ...staff, (req, res) => {
+    revokeConnection(req.params.id);
+    return res.redirect('/admin/connections');
+  });
+
   app.get('/admin/kuma/:id', ...staff, async (req, res) => {
     const windowKey = normalizeWindow(req.query.window);
     const { snapshot } = await databaseMonitors(windowKey);
@@ -360,11 +474,8 @@ function start() {
   if (kumaProxy && typeof kumaProxy.upgrade === 'function') {
     server.on('upgrade', (req, socket, head) => {
       const url = req.url || '';
-      if (
-        url.startsWith('/internal') ||
-        url.startsWith('/admin') ||
-        url.startsWith('/health')
-      ) {
+      const pathname = url.split('?')[0];
+      if (isGatewayPath(pathname)) {
         socket.destroy();
         return;
       }

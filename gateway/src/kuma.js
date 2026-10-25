@@ -47,6 +47,7 @@ async function fetchKumaSnapshot(now = Date.now()) {
         groupName: String(group.name || '').trim(),
         samples,
         uptime24: beats.uptimeList ? beats.uptimeList[uptimeKey] : null,
+        url: monitor.url || '',
       });
     }
   }

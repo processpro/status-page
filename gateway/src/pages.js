@@ -186,6 +186,14 @@ function renderInternalPage({ email, monitors, samplesById, windowKey }) {
   return renderShell({ title: 'Internal', active: 'internal', email, body, refreshSeconds: 60 });
 }
 
+function renderAdminTabs(active) {
+  const tab = (id, href, label) => {
+    const cls = active === id ? 'window active' : 'window';
+    return `<a class="${cls}" href="${href}">${label}</a>`;
+  };
+  return `<nav class="windows">${tab('monitors', '/admin', 'Monitors')}${tab('connections', '/admin/connections', 'Connections')}</nav>`;
+}
+
 function renderAdminPage({ email, monitors, samplesById, databases, windowKey, notice }) {
   const now = Date.now();
   const key = normalizeWindow(windowKey);
@@ -235,6 +243,7 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
     <div class="page-head">
       <div>
         <h1>Admin</h1>
+        ${renderAdminTabs('monitors')}
         <p class="lede">Public and internal monitors on one screen. Add a login URL yourself for demo, Australia, or Europe West instances. ${escapeHtml(windowCaption(windowKey))} Changing the window does not delete anything.</p>
       </div>
       <div class="head-actions">
@@ -247,6 +256,63 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
     ${renderGroupSection('Databases', 'From Uptime Kuma. Edit those connections in the Kuma dashboard.', dbRows, 'No database monitors reported.').replace('<th>Latest</th></tr>', '<th>Latest</th><th></th></tr>')}`;
 
   return renderShell({ title: 'Admin', active: 'admin', email, body, refreshSeconds: 60 });
+}
+
+function renderConnectionsPage({ email, connections, issued, error }) {
+  const rows = (connections || []).map((connection) => {
+    const assigned = !connection.revokedUtc;
+    const lastUsed = connection.lastUsedUtc
+      ? escapeHtml(connection.lastUsedUtc.replace('T', ' ').slice(0, 19)) + ' UTC'
+      : 'Never';
+    const created = escapeHtml(String(connection.createdUtc || '').replace('T', ' ').slice(0, 19));
+    return `<tr>
+      <td><strong>${escapeHtml(connection.agentName)}</strong><div class="muted">${escapeHtml(connection.createdBy || '')}</div></td>
+      <td>${assigned ? '<span class="badge badge-up">Assigned</span>' : '<span class="badge badge-wait">Revoked</span>'}</td>
+      <td class="muted">${created} UTC</td>
+      <td class="muted">${lastUsed}</td>
+      <td>${assigned ? `<form method="post" action="/admin/connections/${encodeURIComponent(connection.id)}/revoke"><button class="pp-button pp-button-danger" type="submit">Revoke</button></form>` : ''}</td>
+    </tr>`;
+  }).join('');
+  const issuedBlock = issued
+    ? `<section class="panel">
+        <div class="panel-head">
+          <h2>Token assigned to ${escapeHtml(issued.connection.agentName)}</h2>
+          <p>Copy this bearer token now. Status stores only a hash, so it cannot be shown again.</p>
+        </div>
+        <label class="stack-form">Bearer token
+          <textarea readonly rows="4">${escapeHtml(issued.token)}</textarea>
+        </label>
+      </section>`
+    : '';
+  const body = `
+    <div class="page-head">
+      <div>
+        <h1>Admin</h1>
+        ${renderAdminTabs('connections')}
+        <p class="lede">Create a JWS bearer token for each agent. Agents send Authorization: Bearer to GET /api/sites, POST /api/sites, and DELETE /api/sites/{name}. POST takes name, region, and url.</p>
+      </div>
+    </div>
+    ${error ? `<p class="form-error">${escapeHtml(error)}</p>` : ''}
+    ${issuedBlock}
+    <section class="panel">
+      <div class="panel-head">
+        <h2>New agent token</h2>
+        <p>The list shows which agent each token is assigned to.</p>
+      </div>
+      <form class="stack-form" method="post" action="/admin/connections">
+        <label>Agent name <input name="agentName" required maxlength="120" autocomplete="off" placeholder="fleet-agent" /></label>
+        <div class="form-actions"><button class="pp-button" type="submit">Create token</button></div>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Agent</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5">No agent tokens yet.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>`;
+  return renderShell({ title: 'Connections', active: 'admin', email, body });
 }
 
 function renderHistoryPage({ email, monitor, samples, windowKey, mode }) {
@@ -391,6 +457,7 @@ function renderMonitorEditor({ email, monitor, error }) {
 
 module.exports = {
   renderAdminPage,
+  renderConnectionsPage,
   renderHistoryPage,
   renderInternalPage,
   renderKumaHistoryPage,
