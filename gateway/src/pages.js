@@ -88,6 +88,7 @@ function renderShell({ title, active, email, body, refreshSeconds }) {
         ${item('public', '/', 'Public status', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>')}
         ${item('internal', '/internal', 'Internal', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>')}
         ${item('admin', '/admin', 'Admin', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 4v5c0 5-3.4 7.6-8 9-4.6-1.4-8-4-8-9V7l8-4z"/></svg>')}
+        ${item('connections', '/admin/connections', 'Connections', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7a4 4 0 0 0-6.6 4.2L4 15.6V20h4.4l4.4-4.4A4 4 0 1 0 15 7z"/><path d="M15.5 8.5l1 1"/></svg>')}
       </nav>
       <div class="pp-sidebar-footer">
         <a class="pp-button pp-button-ghost pp-full" href="/internal/logout">Sign out</a>
@@ -186,14 +187,6 @@ function renderInternalPage({ email, monitors, samplesById, windowKey }) {
   return renderShell({ title: 'Internal', active: 'internal', email, body, refreshSeconds: 60 });
 }
 
-function renderAdminTabs(active) {
-  const tab = (id, href, label) => {
-    const cls = active === id ? 'window active' : 'window';
-    return `<a class="${cls}" href="${href}">${label}</a>`;
-  };
-  return `<nav class="windows">${tab('monitors', '/admin', 'Monitors')}${tab('connections', '/admin/connections', 'Connections')}</nav>`;
-}
-
 function renderAdminPage({ email, monitors, samplesById, databases, windowKey, notice }) {
   const now = Date.now();
   const key = normalizeWindow(windowKey);
@@ -243,7 +236,6 @@ function renderAdminPage({ email, monitors, samplesById, databases, windowKey, n
     <div class="page-head">
       <div>
         <h1>Admin</h1>
-        ${renderAdminTabs('monitors')}
         <p class="lede">Public and internal monitors on one screen. Add a login URL yourself for demo, Australia, or Europe West instances. ${escapeHtml(windowCaption(windowKey))} Changing the window does not delete anything.</p>
       </div>
       <div class="head-actions">
@@ -287,8 +279,7 @@ function renderConnectionsPage({ email, connections, issued, error }) {
   const body = `
     <div class="page-head">
       <div>
-        <h1>Admin</h1>
-        ${renderAdminTabs('connections')}
+        <h1>Connections</h1>
         <p class="lede">Create a JWS bearer token for each agent. Agents send Authorization: Bearer to GET /api/sites, POST /api/sites, and DELETE /api/sites/{name}. POST takes name, region, and url.</p>
       </div>
     </div>
@@ -312,7 +303,7 @@ function renderConnectionsPage({ email, connections, issued, error }) {
         </table>
       </div>
     </section>`;
-  return renderShell({ title: 'Connections', active: 'admin', email, body });
+  return renderShell({ title: 'Connections', active: 'connections', email, body });
 }
 
 function renderHistoryPage({ email, monitor, samples, windowKey, mode }) {
