@@ -32,7 +32,7 @@ const {
 const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
 const { normalizeWindow, samplesFromMemory } = require('./history');
 const { probeAndRecord, startScheduler } = require('./scheduler');
-const { getPlanDetail, getSnapshot, getSqlDetail, startVitals } = require('./vitals');
+const { getPlanDetail, getSnapshot, getSqlDetail, startVitals, vitalsWindow } = require('./vitals');
 const { renderVitalsPage, renderVitalsPlanPage, renderVitalsSqlPage } = require('./vitals-page');
 const {
   createMonitor,
@@ -300,7 +300,7 @@ function mountStaffRoutes(app, { enforceAuth }) {
   });
 
   app.get('/internal/vitals/plans/:rg/:name', ...staff, async (req, res) => {
-    const windowKey = req.query.window === '7d' ? '7d' : '24h';
+    const windowKey = vitalsWindow(req.query.window);
     const detail = await getPlanDetail(req.params.rg, req.params.name, windowKey, {
       app: req.query.app,
       measure: req.query.measure,
@@ -316,7 +316,7 @@ function mountStaffRoutes(app, { enforceAuth }) {
   });
 
   app.get('/internal/vitals/sql/:rg/:name', ...staff, async (req, res) => {
-    const windowKey = req.query.window === '7d' ? '7d' : '24h';
+    const windowKey = vitalsWindow(req.query.window);
     const detail = await getSqlDetail(req.params.rg, req.params.name, windowKey, req.query.db);
     if (!detail) {
       return res.status(404).type('text').send('SQL server not found');

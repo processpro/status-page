@@ -93,13 +93,13 @@ function chartTimeLabel(iso, span) {
   const month = MONTHS[date.getUTCMonth()];
   const hours = String(date.getUTCHours()).padStart(2, '0');
   const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-  return span === '7d' ? `${day} ${month}` : `${hours}:${minutes}`;
+  return span === '24h' ? `${hours}:${minutes}` : `${day} ${month}`;
 }
 
 function renderMemoryChart(points, { limit = MEMORY_RED, unit = 'percent', span = '24h' } = {}) {
   const samples = (points || []).filter((point) => point && point.value != null);
   if (samples.length < 2) {
-    return '<p class="muted">Not enough readings yet to show a line. The next points arrive every 5 minutes, and this chart keeps the last 24 hours or 7 days.</p>';
+    return '<p class="muted">Not enough readings yet to show a line. The next points arrive every 5 minutes, and this chart keeps the last 24 hours, 7 days, or 30 days.</p>';
   }
   const width = 720;
   const height = 240;

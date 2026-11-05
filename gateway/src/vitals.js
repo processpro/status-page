@@ -6,6 +6,7 @@ const { cpuLevel, mean, memoryLevel, parseMetricSeries } = require('./vitals-eva
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
+const MONTH = 30 * DAY;
 const SNAPSHOT_TTL = 5 * 60 * 1000;
 const CATALOG_TTL = 30 * 60 * 1000;
 
@@ -361,9 +362,26 @@ const FIXTURE_APPS = {
   ],
 };
 
+function vitalsWindow(value) {
+  if (value === '30d' || value === '7d' || value === '24h') {
+    return value;
+  }
+  return '24h';
+}
+
+function metricWindow(windowKey) {
+  if (windowKey === '30d') {
+    return { duration: MONTH, interval: 'PT1H' };
+  }
+  if (windowKey === '7d') {
+    return { duration: WEEK, interval: 'PT1H' };
+  }
+  return { duration: DAY, interval: 'PT15M' };
+}
+
 function fixtureSeries(base, windowKey, spread) {
-  const count = windowKey === '7d' ? 28 : 24;
-  const step = windowKey === '7d' ? 6 * HOUR : HOUR;
+  const count = windowKey === '30d' ? 30 : windowKey === '7d' ? 28 : 24;
+  const step = windowKey === '30d' ? DAY : windowKey === '7d' ? 6 * HOUR : HOUR;
   const now = Date.now();
   return Array.from({ length: count }, (_, index) => {
     const wave = Math.sin(index / 2.5) * spread + (index / count) * spread * 0.4;
@@ -402,8 +420,7 @@ async function getPlanDetail(resourceGroup, name, windowKey, selection = {}) {
   if (!plan) {
     return null;
   }
-  const duration = windowKey === '7d' ? WEEK : DAY;
-  const interval = windowKey === '7d' ? 'PT1H' : 'PT15M';
+  const { duration, interval } = metricWindow(windowKey);
   const apps = catalog.sites.filter((site) => site.serverFarmId === plan.id.toLowerCase());
   const measured = await mapPool(apps, 6, async (site) => {
     try {
@@ -476,8 +493,7 @@ async function getSqlDetail(resourceGroup, name, windowKey, databaseName) {
   const source = server.databases.find((database) => database.name === selected?.name);
   let series = [];
   if (source) {
-    const duration = windowKey === '7d' ? WEEK : DAY;
-    const interval = windowKey === '7d' ? 'PT1H' : 'PT15M';
+    const { duration, interval } = metricWindow(windowKey);
     const names = selected?.metric === 'CPU' ? ['cpu_percent'] : ['dtu_consumption_percent', 'cpu_percent'];
     const seriesMap = await metricMap(source.id, names, duration, interval);
     series = seriesMap.dtu_consumption_percent?.length
@@ -505,4 +521,5 @@ module.exports = {
   getSnapshot,
   getSqlDetail,
   startVitals,
+  vitalsWindow,
 };

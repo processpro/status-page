@@ -86,10 +86,19 @@ function queryHref(path, params) {
   return text ? `${path}?${text}` : path;
 }
 
+const VITAL_WINDOWS = [
+  ['24h', '24 hours'],
+  ['7d', '7 days'],
+  ['30d', '30 days'],
+];
+
+function windowLabel(windowKey) {
+  return VITAL_WINDOWS.find(([key]) => key === windowKey)?.[1] || '24 hours';
+}
+
 function windowLinks(basePath, selected) {
-  return ['24h', '7d']
-    .map((key) => {
-      const label = key === '7d' ? '7 days' : '24 hours';
+  return VITAL_WINDOWS
+    .map(([key, label]) => {
       const cls = key === selected ? 'window active' : 'window';
       const joiner = basePath.includes('?') ? '&' : '?';
       return `<a class="${cls}" href="${escapeHtml(`${basePath}${joiner}window=${key}`)}">${label}</a>`;
@@ -159,7 +168,7 @@ function renderVitalsPlanPage({ email, detail, windowKey }) {
     </div>
     <section class="panel">
       <div class="panel-head">
-        <h2>${escapeHtml(chart.title)} · ${windowKey === '7d' ? '7 days' : '24 hours'}</h2>
+        <h2>${escapeHtml(chart.title)} · ${escapeHtml(windowLabel(windowKey))}</h2>
         <p>${escapeHtml(chart.caption || '')}</p>
       </div>
       <nav class="windows">
@@ -196,7 +205,7 @@ function renderVitalsSqlPage({ email, detail, windowKey }) {
       <nav class="windows">${windowLinks(chartBase, windowKey)}</nav>
     </div>
     <section class="panel">
-      <div class="panel-head"><h2>${escapeHtml(detail.selected || 'Database')} · ${windowKey === '7d' ? '7 days' : '24 hours'}</h2></div>
+      <div class="panel-head"><h2>${escapeHtml(detail.selected || 'Database')} · ${escapeHtml(windowLabel(windowKey))}</h2></div>
       <p class="muted">Each point is this database. Time runs left to right. The dashed line is 85%.</p>
       ${renderMemoryChart(detail.series, { span: windowKey })}
     </section>

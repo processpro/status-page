@@ -3,6 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  chartTimeLabel,
   cpuLevel,
   formatPercent,
   mean,
@@ -10,7 +11,8 @@ const {
   parseMetricSeries,
   renderMemoryChart,
 } = require('../src/vitals-eval');
-const { renderVitalsPage } = require('../src/vitals-page');
+const { renderVitalsPage, renderVitalsPlanPage } = require('../src/vitals-page');
+const { vitalsWindow } = require('../src/vitals');
 
 describe('vitals thresholds', () => {
   it('turns memory amber at 70 and red at 85', () => {
@@ -77,5 +79,30 @@ describe('vitals thresholds', () => {
     assert.match(page, /vital-limit/);
     assert.match(page, /href="\/internal\/vitals"/);
     assert.equal(formatPercent(95), '95%');
+  });
+
+  it('offers a 30 day line and labels that chart by day', () => {
+    assert.equal(chartTimeLabel('2026-10-06T00:00:00.000Z', '30d'), '6 Oct');
+    assert.equal(chartTimeLabel('2026-11-05T01:05:00.000Z', '24h'), '01:05');
+    assert.equal(vitalsWindow('30d'), '30d');
+    assert.equal(vitalsWindow('later'), '24h');
+    const page = renderVitalsPlanPage({
+      email: 'dev@processpro.io',
+      windowKey: '30d',
+      detail: {
+        plan: { name: 'plan', resourceGroup: 'rg', location: 'Australia East', sku: 'P2v4', memoryHour: 40 },
+        apps: [],
+        series: [
+          { t: '2026-10-06T00:00:00.000Z', value: 40 },
+          { t: '2026-11-05T00:00:00.000Z', value: 50 },
+        ],
+        selectedApp: '',
+        measure: 'memory',
+        chart: { unit: 'percent', title: 'Server memory', caption: 'Each point is the server’s memory.' },
+      },
+    });
+    assert.match(page, /30 days/);
+    assert.match(page, /window=30d/);
+    assert.match(page, /6 Oct/);
   });
 });
