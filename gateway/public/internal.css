@@ -387,6 +387,63 @@ code {
 .pp-page .panel { margin-bottom: 1rem; }
 .pp-page .lede, .pp-page .muted { color: #68758a; }
 
+.vital-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding-top: 20px;
+}
+.vital-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px 18px 20px;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.vital-card.hot { border-color: var(--down); }
+.vital-card.warn { border-color: #d69e2e; }
+.vital-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1 0 auto;
+  margin-bottom: 8px;
+}
+.vital-card-top strong {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.vital-figure, .vital-cpu { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.vital-figure { margin: 12px 0 8px; font-size: 1.4rem; font-weight: 700; }
+.vital-figure small, .vital-cpu small { font-size: 0.8rem; font-weight: 400; color: var(--muted); }
+.vital-state { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.vital-state.hot, .vital-cpu.hot { color: var(--down); }
+.vital-state.warn { color: #9a6700; }
+.vital-state.ok { color: #3d7a12; }
+.vital-meter { position: relative; margin: 8px 0; }
+.vital-track { height: 14px; background: #e7eee4; border-radius: 99px; overflow: hidden; }
+.vital-fill { height: 100%; }
+.vital-fill.ok { background: var(--green); }
+.vital-fill.warn { background: #d69e2e; }
+.vital-fill.hot { background: var(--down); }
+.vital-limit { position: absolute; top: -4px; width: 2px; height: 22px; background: var(--ink); }
+.vital-chart { width: 100%; height: auto; }
+.vital-chart-line { stroke: #245c12; stroke-width: 2; }
+.vital-chart-limit { stroke: var(--down); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.vital-chart-label { fill: var(--down); font-size: 12px; }
+.vital-chart-axis { fill: #68758a; font-size: 12px; }
+.vital-chart-grid { stroke: #e3ebdf; stroke-width: 1; }
+.vital-current { background: #f4faef; }
+.vital-meter .vital-track { min-width: 120px; }
+
 @media (max-width: 800px) {
   .top, .page-head, .status-card-top { flex-direction: column; }
   .pp-app { grid-template-columns: 1fr; }

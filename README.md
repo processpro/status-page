@@ -11,6 +11,10 @@ Deploys [Uptime Kuma](https://github.com/louislam/uptime-kuma) to Azure App Serv
 
 The public page must not list client-specific apps. Staff sign-in for `/internal` uses Entra ID and allows only `@processpro.io` and `@processpro.com` accounts (same domain gate as Sentinel).
 
+`/internal/vitals` is staff only. It reads Azure Monitor every 5 minutes: one card per App Service plan and one card per SQL server. The memory line is 85% (amber from 70%). CPU on a plan turns red when the last hour averages over 40%, or CPU stays above 80% for 15 minutes. Open a card for the 24-hour or 7-day line and the apps or databases on that server.
+
+The status app uses its system-assigned identity. The Bicep deployment grants that identity Reader on the subscription so it can list the servers and read metrics. Metrics stay in Azure Monitor. They are not copied into Log Analytics.
+
 ## Architecture
 
 The container image is based on `louislam/uptime-kuma` and adds a small Node gateway that:

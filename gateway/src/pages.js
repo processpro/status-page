@@ -71,7 +71,7 @@ function renderShell({ title, active, email, body, refreshSeconds }) {
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/internal/assets/internal.css" />
+  <link rel="stylesheet" href="/internal/assets/internal.css?v=4" />
 </head>
 <body>
   <div class="pp-app">
@@ -87,6 +87,7 @@ function renderShell({ title, active, email, body, refreshSeconds }) {
         <span class="pp-nav-label">Views</span>
         ${item('public', '/', 'Public status', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>')}
         ${item('internal', '/internal', 'Internal', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/></svg>')}
+        ${item('vitals', '/internal/vitals', 'Vitals', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>')}
         ${item('admin', '/admin', 'Admin', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 4v5c0 5-3.4 7.6-8 9-4.6-1.4-8-4-8-9V7l8-4z"/></svg>')}
         ${item('connections', '/admin/connections', 'Connections', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7a4 4 0 0 0-6.6 4.2L4 15.6V20h4.4l4.4-4.4A4 4 0 1 0 15 7z"/><path d="M15.5 8.5l1 1"/></svg>')}
       </nav>
@@ -453,4 +454,5 @@ module.exports = {
   renderInternalPage,
   renderKumaHistoryPage,
   renderMonitorEditor,
+  renderShell,
 };

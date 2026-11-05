@@ -90,6 +90,10 @@ var gatewayAppSettings = [
     name: 'DEMO_APP_SERVICES'
     value: demoAppServices
   }
+  {
+    name: 'AZURE_SUBSCRIPTION_ID'
+    value: subscription().subscriptionId
+  }
 ]
 
 // create resource group
@@ -150,6 +154,16 @@ module wapp '../modules/appServiceDockerPublic.bicep' = {
     dockerRegistryServerUser: dockerRegistryServerUser
     dockerRegistryServerPassword: dockerRegistryServerPassword
     appSettings: gatewayAppSettings
+  }
+}
+
+// Reader lets Vitals list plans, apps, and SQL servers and read their metrics.
+resource vitalsReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, wapp.outputs.principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+    principalId: wapp.outputs.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 

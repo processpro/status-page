@@ -46,6 +46,9 @@ var registryCredentialSettings = empty(dockerRegistryServerUser) ? [] : [
 resource appService 'Microsoft.Web/sites@2020-06-01' = {
   name: webAppName
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: appServicePlanId
     siteConfig: {
@@ -56,3 +59,4 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
 }
 
 output webAppName string = appService.name
+output principalId string = appService.identity.principalId

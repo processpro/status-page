@@ -32,6 +32,8 @@ const {
 const { applyKumaSamples, samplesForCatalog } = require('./kuma-stats');
 const { normalizeWindow, samplesFromMemory } = require('./history');
 const { probeAndRecord, startScheduler } = require('./scheduler');
+const { getPlanDetail, getSnapshot, getSqlDetail, startVitals } = require('./vitals');
+const { renderVitalsPage, renderVitalsPlanPage, renderVitalsSqlPage } = require('./vitals-page');
 const {
   createMonitor,
   dataDir,
@@ -288,6 +290,44 @@ function mountStaffRoutes(app, { enforceAuth }) {
 
   const staff = [guard, ensureStaff];
 
+  app.get(['/internal/vitals', '/internal/vitals/'], ...staff, async (req, res) => {
+    const result = await getSnapshot();
+    res.type('html').send(renderVitalsPage({
+      email: req.staffEmail,
+      snapshot: result.snapshot,
+      error: result.error,
+    }));
+  });
+
+  app.get('/internal/vitals/plans/:rg/:name', ...staff, async (req, res) => {
+    const windowKey = req.query.window === '7d' ? '7d' : '24h';
+    const detail = await getPlanDetail(req.params.rg, req.params.name, windowKey, {
+      app: req.query.app,
+      measure: req.query.measure,
+    });
+    if (!detail) {
+      return res.status(404).type('text').send('Server not found');
+    }
+    return res.type('html').send(renderVitalsPlanPage({
+      email: req.staffEmail,
+      detail,
+      windowKey,
+    }));
+  });
+
+  app.get('/internal/vitals/sql/:rg/:name', ...staff, async (req, res) => {
+    const windowKey = req.query.window === '7d' ? '7d' : '24h';
+    const detail = await getSqlDetail(req.params.rg, req.params.name, windowKey, req.query.db);
+    if (!detail) {
+      return res.status(404).type('text').send('SQL server not found');
+    }
+    return res.type('html').send(renderVitalsSqlPage({
+      email: req.staffEmail,
+      detail,
+      windowKey,
+    }));
+  });
+
   app.get(['/internal', '/internal/'], ...staff, async (req, res) => {
     const monitors = loadMonitors();
     const windowKey = normalizeWindow(req.query.window);
@@ -468,6 +508,7 @@ function start() {
     console.error('Failed to load monitor catalog:', error.message);
   }
   startScheduler();
+  startVitals();
   mountAppRoutes(app);
 
   const kumaProxy = app.locals.kumaProxy;
