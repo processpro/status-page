@@ -15,21 +15,83 @@ function armTimespan(durationMs, now = Date.now()) {
   return `${start.toISOString()}/${end.toISOString()}`;
 }
 
+function withQuery(url, params) {
+  return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
+}
+
+function identityRequest(env = process.env) {
+  const resource = 'https://management.azure.com/';
+  const clientId = env.AZURE_CLIENT_ID;
+  if (env.IDENTITY_ENDPOINT && env.IDENTITY_HEADER) {
+    const params = new URLSearchParams({ 'api-version': '2019-08-01', resource });
+    if (clientId) {
+      params.set('client_id', clientId);
+    }
+    return {
+      url: withQuery(env.IDENTITY_ENDPOINT, params),
+      headers: { 'X-IDENTITY-HEADER': env.IDENTITY_HEADER },
+    };
+  }
+  if (env.MSI_ENDPOINT && env.MSI_SECRET) {
+    const params = new URLSearchParams({ 'api-version': '2017-09-01', resource });
+    if (clientId) {
+      params.set('client_id', clientId);
+    }
+    return {
+      url: withQuery(env.MSI_ENDPOINT, params),
+      headers: { Secret: env.MSI_SECRET },
+    };
+  }
+  const params = new URLSearchParams({ 'api-version': '2018-02-01', resource });
+  if (clientId) {
+    params.set('client_id', clientId);
+  }
+  return {
+    url: `http://169.254.169.254/metadata/identity/oauth2/token?${params.toString()}`,
+    headers: { Metadata: 'true' },
+  };
+}
+
+function describeFetchError(error) {
+  const cause = error.cause;
+  const codes = [];
+  if (cause?.code) {
+    codes.push(cause.code);
+  }
+  if (Array.isArray(cause?.errors)) {
+    cause.errors.forEach((item) => {
+      if (item?.code) {
+        codes.push(item.code);
+      }
+    });
+  }
+  return codes.length ? `${error.message} (${codes.join(', ')})` : error.message;
+}
+
+function tokenExpiry(body) {
+  const expiresIn = Number(body.expires_in);
+  if (Number.isFinite(expiresIn) && expiresIn > 0) {
+    return Date.now() + expiresIn * 1000;
+  }
+  const expiresOn = Number(body.expires_on);
+  if (Number.isFinite(expiresOn) && expiresOn > 0) {
+    return expiresOn > 10_000_000_000 ? expiresOn : expiresOn * 1000;
+  }
+  return Date.now() + 3600 * 1000;
+}
+
 async function armToken() {
   if (tokenCache.value && tokenCache.expiresAt > Date.now() + 60_000) {
     return tokenCache.value;
   }
-  const params = new URLSearchParams({
-    'api-version': '2018-02-01',
-    resource: 'https://management.azure.com/',
-  });
-  if (process.env.AZURE_CLIENT_ID) {
-    params.set('client_id', process.env.AZURE_CLIENT_ID);
+  const request = identityRequest();
+  let response;
+  try {
+    response = await fetch(request.url, { headers: request.headers });
+  } catch (error) {
+    const where = process.env.IDENTITY_ENDPOINT ? 'App Service identity endpoint' : 'instance metadata';
+    throw new Error(`Azure identity is not available from the ${where}. ${describeFetchError(error)}`);
   }
-  const response = await fetch(
-    `http://169.254.169.254/metadata/identity/oauth2/token?${params.toString()}`,
-    { headers: { Metadata: 'true' } }
-  );
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(`Azure identity is not available (${response.status}). ${detail.slice(0, 180)}`);
@@ -37,16 +99,21 @@ async function armToken() {
   const body = await response.json();
   tokenCache = {
     value: body.access_token,
-    expiresAt: Date.now() + Number(body.expires_in || 3600) * 1000,
+    expiresAt: tokenExpiry(body),
   };
   return tokenCache.value;
 }
 
 async function armGet(pathname) {
   const token = await armToken();
-  const response = await fetch(`${ARM}${pathname}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let response;
+  try {
+    response = await fetch(`${ARM}${pathname}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (error) {
+    throw new Error(`Azure request failed for ${pathname.split('?')[0]}. ${describeFetchError(error)}`);
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(`Azure ${response.status} for ${pathname.split('?')[0]}. ${detail.slice(0, 180)}`);
@@ -84,6 +151,7 @@ module.exports = {
   DEFAULT_SUBSCRIPTION,
   armGet,
   armTimespan,
+  identityRequest,
   listAll,
   queryMetrics,
   resetTokenCache,
