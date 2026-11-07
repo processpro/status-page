@@ -424,6 +424,8 @@ code {
 .vital-figure, .vital-cpu { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .vital-figure { margin: 12px 0 8px; font-size: 1.4rem; font-weight: 700; }
 .vital-figure small, .vital-cpu small { font-size: 0.8rem; font-weight: 400; color: var(--muted); }
+.vital-note { margin-top: 6px; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+.vital-cpu { margin-top: 8px; }
 .vital-state { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .vital-state.hot, .vital-cpu.hot { color: var(--down); }
 .vital-state.warn { color: #9a6700; }

@@ -1,7 +1,18 @@
 'use strict';
 
-const { armTimespan, listAll, queryMetrics, subscriptionId } = require('./azure');
-const { cpuLevel, mean, memoryLevel, parseMetricSeries } = require('./vitals-eval');
+const { armGet, armTimespan, listAll, queryMetrics, subscriptionId } = require('./azure');
+const {
+  appCapacityMb,
+  capabilityList,
+  cpuLevel,
+  mean,
+  memoryLevel,
+  memoryMbFromCapabilities,
+  parseMetricSeries,
+  planMemory,
+  sumSeries,
+  workerCount,
+} = require('./vitals-eval');
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -48,6 +59,19 @@ async function mapPool(items, limit, worker) {
   return results;
 }
 
+function fixturePlan(plan) {
+  return {
+    ...plan,
+    ...planMemory({
+      memoryMb: plan.memoryMb,
+      appBytes: plan.appMemoryMb * 1024 * 1024,
+      cacheValues: [plan.cacheHour],
+      incomplete: false,
+    }),
+    memoryIncomplete: false,
+  };
+}
+
 function fixtureSnapshot() {
   return {
     fetchedAt: new Date().toISOString(),
@@ -57,9 +81,11 @@ function fixtureSnapshot() {
         name: 'ASP-processproresourcegroup-87zx',
         resourceGroup: 'processpro-azure-au-resourcegroup',
         location: 'Australia East',
-        sku: 'P2v4',
-        memoryHour: 95,
-        memoryLevel: 'hot',
+        sku: 'P3v4',
+        memoryMb: 32768,
+        workers: 1,
+        appMemoryMb: 11776,
+        cacheHour: 92.1,
         cpuHour: 8,
         cpuLevel: 'ok',
       },
@@ -68,8 +94,10 @@ function fixtureSnapshot() {
         resourceGroup: 'processpro-azure-ca-resourcegroup',
         location: 'Canada Central',
         sku: 'P1v3',
-        memoryHour: 93,
-        memoryLevel: 'hot',
+        memoryMb: 8192,
+        workers: 1,
+        appMemoryMb: 7600,
+        cacheHour: 93,
         cpuHour: 8,
         cpuLevel: 'ok',
       },
@@ -78,8 +106,10 @@ function fixtureSnapshot() {
         resourceGroup: 'processpro-azure-demo-resourcegroup',
         location: 'Australia East',
         sku: 'P1v4',
-        memoryHour: 91,
-        memoryLevel: 'hot',
+        memoryMb: 8192,
+        workers: 1,
+        appMemoryMb: 6400,
+        cacheHour: 91,
         cpuHour: 3,
         cpuLevel: 'ok',
       },
@@ -88,8 +118,10 @@ function fixtureSnapshot() {
         resourceGroup: 'processpro-azure-us-resourcegroup',
         location: 'Central US',
         sku: 'P2v3',
-        memoryHour: 78,
-        memoryLevel: 'warn',
+        memoryMb: 16384,
+        workers: 2,
+        appMemoryMb: 8000,
+        cacheHour: 78,
         cpuHour: 1,
         cpuLevel: 'ok',
       },
@@ -98,8 +130,10 @@ function fixtureSnapshot() {
         resourceGroup: 'processpro-azure-weu-resourcegroup',
         location: 'West Europe',
         sku: 'P1v4',
-        memoryHour: 49,
-        memoryLevel: 'ok',
+        memoryMb: 8192,
+        workers: 1,
+        appMemoryMb: 2000,
+        cacheHour: 49,
         cpuHour: 1,
         cpuLevel: 'ok',
       },
@@ -108,12 +142,14 @@ function fixtureSnapshot() {
         resourceGroup: 'processpro-azure-eu-resourcegroup',
         location: 'UK South',
         sku: 'P1v3',
-        memoryHour: 46,
-        memoryLevel: 'ok',
+        memoryMb: 8192,
+        workers: 1,
+        appMemoryMb: 1500,
+        cacheHour: 46,
         cpuHour: 2,
         cpuLevel: 'ok',
       },
-    ],
+    ].map(fixturePlan),
     sqlServers: [
       {
         name: 'processpro-dbserver',
@@ -197,6 +233,8 @@ async function loadCatalog() {
       resourceGroup: resourceGroupOf(plan.id),
       location: placeName(plan.location),
       sku: plan.sku?.name || '',
+      memoryMb: null,
+      workers: workerCount(plan),
     })),
     sites: sites
       .filter((site) => !String(site.kind || '').includes('functionapp'))
@@ -219,19 +257,54 @@ async function metricMap(resourceId, names, durationMs, interval, aggregation) {
   return parseMetricSeries(body);
 }
 
-function summarisePlan(plan, series) {
-  const memory = (series.MemoryPercentage || []).map((point) => point.value);
-  const cpu = (series.CpuPercentage || []).map((point) => point.value);
-  const memoryHour = mean(memory);
-  const cpuHour = mean(cpu);
+function summarisePlan(plan, { cacheValues, cpuValues, appBytes, incomplete, memoryMb }) {
+  const cpuHour = mean(cpuValues);
   return {
     ...plan,
-    memoryHour,
-    memoryLevel: memoryLevel(memoryHour),
+    memoryMb,
+    ...planMemory({ memoryMb, appBytes, cacheValues, incomplete }),
     cpuHour,
-    cpuLevel: cpuLevel(cpuHour, cpu),
+    cpuLevel: cpuLevel(cpuHour, cpuValues),
   };
 }
+
+async function currentMemoryMb(plan) {
+  try {
+    const body = await armGet(`${plan.id}/capabilities?api-version=2022-09-01`);
+    const fresh = memoryMbFromCapabilities(capabilityList(body));
+    if (fresh != null) {
+      plan.memoryMb = fresh;
+      return fresh;
+    }
+  } catch {
+    // Keep the last size Azure returned. A failed call is not a size.
+  }
+  return plan.memoryMb ?? null;
+}
+
+async function planAppSeries(plan, duration, interval) {
+  const sites = catalog.sites.filter((site) => site.serverFarmId === String(plan.id || '').toLowerCase());
+  if (!sites.length) {
+    return { series: [], appBytes: 0, incomplete: false };
+  }
+  const measured = await mapPool(sites, 6, async (site) => {
+    try {
+      const series = await metricMap(site.id, ['AverageMemoryWorkingSet'], duration, interval);
+      return { ok: true, series: series.AverageMemoryWorkingSet || [] };
+    } catch {
+      return { ok: false, series: [] };
+    }
+  });
+  const series = sumSeries(measured.filter((item) => item.ok).map((item) => item.series));
+  return {
+    series,
+    appBytes: series.length ? mean(series.map((point) => point.value)) : null,
+    incomplete: measured.some((item) => !item.ok),
+  };
+}
+
+const APP_MEMORY_CAPTION = 'Each point is the apps’ memory as a percent of the memory left for apps. That is the plan size Azure reports now, after 2 GB held for the operating system. Time runs left to right. The dashed line is 85%. Windows file cache is not included.';
+const APP_MEMORY_MB_CAPTION = 'Azure did not return a memory size for this plan. Each point is the apps’ memory in megabytes. This is not a percentage of the plan.';
 
 function databasePressure(series) {
   const dtu = (series.dtu_consumption_percent || []).map((point) => point.value);
@@ -247,12 +320,30 @@ function databasePressure(series) {
 async function readSnapshot() {
   const current = await loadCatalog();
   const plans = await mapPool(current.plans, 4, async (plan) => {
+    let cacheValues = [];
+    let cpuValues = [];
+    let planError = '';
     try {
       const series = await metricMap(plan.id, ['MemoryPercentage', 'CpuPercentage'], HOUR, 'PT5M');
-      return summarisePlan(plan, series);
+      cacheValues = (series.MemoryPercentage || []).map((point) => point.value);
+      cpuValues = (series.CpuPercentage || []).map((point) => point.value);
     } catch (error) {
-      return { ...plan, memoryHour: null, memoryLevel: 'none', cpuHour: null, cpuLevel: 'none', error: error.message };
+      planError = error.message;
     }
+    const memoryMb = await currentMemoryMb(plan);
+    let appBytes = null;
+    let incomplete = false;
+    let appError = '';
+    try {
+      const usage = await planAppSeries(plan, HOUR, 'PT5M');
+      appBytes = usage.appBytes;
+      incomplete = usage.incomplete;
+    } catch (error) {
+      appError = error.message;
+    }
+    const summary = summarisePlan(plan, { cacheValues, cpuValues, appBytes, incomplete, memoryMb });
+    const error = [planError, appError].filter(Boolean).join(' ');
+    return error ? { ...summary, error } : summary;
   });
   const sqlServers = await mapPool(current.sqlServers, 2, async (server) => {
     const databases = await mapPool(server.databases, 6, async (database) => {
@@ -405,13 +496,13 @@ async function getPlanDetail(resourceGroup, name, windowKey, selection = {}) {
       chart = { unit: 'seconds', title: `${selectedApp.name} CPU time`, caption: 'Each point is that app’s CPU time, in seconds. A higher line means the app was busier. This is not a percentage of the server.' };
     } else if (selectedApp) {
       series = fixtureSeries(selectedApp.memoryMb || 300, windowKey, 40);
-      chart = { unit: 'mb', title: `${selectedApp.name} memory`, caption: 'Each point is that app’s memory in megabytes. This is not the percent of the server. The 85% line is only on the server memory chart.' };
+      chart = { unit: 'mb', title: `${selectedApp.name} memory`, caption: 'Each point is that app’s memory in megabytes. This is not the percent of the plan. The 85% line is only on the app memory chart.' };
     } else if (measure === 'cpu') {
       series = fixtureSeries(plan.cpuHour || 8, windowKey, 6);
       chart = { unit: 'percent', title: 'Server CPU', caption: 'Each point is the server’s CPU. Time runs left to right. A short spike is normal. A line that stays high is the warning.' };
     } else {
       series = fixtureSeries(plan.memoryHour, windowKey, 4);
-      chart = { unit: 'percent', title: 'Server memory', caption: 'Each point is the server’s memory. Time runs left to right. The dashed line is 85%. A line climbing toward it is the early warning.' };
+      chart = { unit: 'percent', title: 'App memory', caption: APP_MEMORY_CAPTION };
     }
     return { plan, apps, series, selectedApp: selectedApp?.name || '', measure, chart };
   }
@@ -433,6 +524,8 @@ async function getPlanDetail(resourceGroup, name, windowKey, selection = {}) {
   });
   measured.sort((left, right) => (right.memoryMb || 0) - (left.memoryMb || 0));
   const selected = measured.find((app) => app.name === selection.app) || null;
+  const card = (cache.snapshot?.plans || []).find((item) => item.name === plan.name && item.resourceGroup === plan.resourceGroup);
+  const memoryMb = card?.memoryMb ?? plan.memoryMb ?? null;
   let series = [];
   let chart;
   if (selected && measure === 'cpu') {
@@ -445,17 +538,30 @@ async function getPlanDetail(resourceGroup, name, windowKey, selection = {}) {
       t: point.t,
       value: point.value == null ? null : point.value / (1024 * 1024),
     }));
-    chart = { unit: 'mb', title: `${selected.name} memory`, caption: 'Each point is that app’s memory in megabytes. This is not the percent of the server. The 85% line is only on the server memory chart.' };
+    chart = { unit: 'mb', title: `${selected.name} memory`, caption: 'Each point is that app’s memory in megabytes. This is not the percent of the plan. The 85% line is only on the app memory chart.' };
   } else if (measure === 'cpu') {
     const seriesMap = await metricMap(plan.id, ['CpuPercentage'], duration, interval);
     series = seriesMap.CpuPercentage || [];
     chart = { unit: 'percent', title: 'Server CPU', caption: 'Each point is the server’s CPU. Time runs left to right. A short spike is normal. A line that stays high is the warning.' };
   } else {
-    const seriesMap = await metricMap(plan.id, ['MemoryPercentage'], duration, interval);
-    series = seriesMap.MemoryPercentage || [];
-    chart = { unit: 'percent', title: 'Server memory', caption: 'Each point is the server’s memory. Time runs left to right. The dashed line is 85%. A line climbing toward it is the early warning.' };
+    const usage = await planAppSeries(plan, duration, interval);
+    const short = usage.incomplete ? ' Some apps did not return memory, so the line is short of the full plan.' : '';
+    const capacityMb = appCapacityMb(memoryMb);
+    if (capacityMb) {
+      const capacity = capacityMb * 1024 * 1024;
+      series = usage.series.map((point) => ({
+        t: point.t,
+        value: point.value == null ? null : (point.value / capacity) * 100,
+      }));
+      chart = { unit: 'percent', title: 'App memory', caption: `${APP_MEMORY_CAPTION}${short}` };
+    } else {
+      series = usage.series.map((point) => ({
+        t: point.t,
+        value: point.value == null ? null : point.value / (1024 * 1024),
+      }));
+      chart = { unit: 'mb', title: 'App memory', caption: `${APP_MEMORY_MB_CAPTION}${short}` };
+    }
   }
-  const card = (cache.snapshot?.plans || []).find((item) => item.name === plan.name && item.resourceGroup === plan.resourceGroup);
   return {
     plan: card || plan,
     apps: measured,

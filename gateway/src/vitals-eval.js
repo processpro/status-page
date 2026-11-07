@@ -27,6 +27,116 @@ function memoryLevel(value) {
   return 'ok';
 }
 
+function capabilityList(body) {
+  if (Array.isArray(body)) {
+    return body;
+  }
+  if (Array.isArray(body?.value)) {
+    return body.value;
+  }
+  return [];
+}
+
+function memoryMbFromCapabilities(capabilities) {
+  const match = (capabilities || []).find((item) => String(item?.name || '').toLowerCase() === 'memory');
+  const value = Number(match?.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
+
+function positiveCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return null;
+  }
+  return Math.round(number);
+}
+
+function workerCount(plan) {
+  return positiveCount(plan?.properties?.currentNumberOfWorkers)
+    ?? positiveCount(plan?.properties?.numberOfWorkers)
+    ?? positiveCount(plan?.sku?.capacity);
+}
+
+const OS_RESERVE_MB = 2048;
+
+function osReserveMb(memoryMb) {
+  if (memoryMb == null || !(memoryMb > 0)) {
+    return null;
+  }
+  if (memoryMb <= OS_RESERVE_MB) {
+    return Math.floor(memoryMb / 2);
+  }
+  return OS_RESERVE_MB;
+}
+
+function appCapacityMb(memoryMb) {
+  const reserve = osReserveMb(memoryMb);
+  if (reserve == null) {
+    return null;
+  }
+  return memoryMb - reserve;
+}
+
+function usagePercent(appBytes, memoryMb) {
+  if (appBytes == null || Number.isNaN(appBytes) || memoryMb == null || !(memoryMb > 0)) {
+    return null;
+  }
+  return (appBytes / (memoryMb * 1024 * 1024)) * 100;
+}
+
+function planMemory({ memoryMb, appBytes, cacheValues, incomplete }) {
+  const reserve = osReserveMb(memoryMb);
+  const capacity = appCapacityMb(memoryMb);
+  const memoryHour = usagePercent(appBytes, capacity);
+  return {
+    appMemoryMb: appBytes == null ? null : appBytes / (1024 * 1024),
+    osReserveMb: reserve,
+    appCapacityMb: capacity,
+    memoryHour,
+    memoryLevel: memoryLevel(memoryHour),
+    cacheHour: mean(cacheValues),
+    memoryIncomplete: Boolean(incomplete) && appBytes != null,
+  };
+}
+
+function sumSeries(seriesList) {
+  const buckets = new Map();
+  for (const series of seriesList || []) {
+    for (const point of series || []) {
+      if (point?.value == null || Number.isNaN(point.value)) {
+        continue;
+      }
+      const list = buckets.get(point.t) || [];
+      list.push(point.value);
+      buckets.set(point.t, list);
+    }
+  }
+  return [...buckets.entries()]
+    .sort((left, right) => (left[0] < right[0] ? -1 : 1))
+    .map(([t, values]) => ({
+      t,
+      value: values.reduce((sum, value) => sum + value, 0),
+    }));
+}
+
+function formatMegabytes(mb) {
+  if (mb == null || Number.isNaN(Number(mb))) {
+    return '—';
+  }
+  const value = Number(mb);
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  if (abs === 0 || abs >= 1024) {
+    const rounded = Math.round((abs / 1024) * 10) / 10;
+    const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+    return `${sign}${text} GB`;
+  }
+  return `${sign}${Math.round(abs)} MB`;
+}
+
 function cpuLevel(hourAverage, recent) {
   const samples = (recent || []).filter((value) => value != null && !Number.isNaN(value));
   const sustained = samples.slice(-CPU_SUSTAINED_POINTS);
@@ -149,12 +259,22 @@ module.exports = {
   CPU_SUSTAINED_POINTS,
   MEMORY_RED,
   MEMORY_WARN,
+  OS_RESERVE_MB,
+  appCapacityMb,
+  capabilityList,
+  chartTimeLabel,
   clampPercent,
   cpuLevel,
+  formatMegabytes,
   formatPercent,
   mean,
   memoryLevel,
+  memoryMbFromCapabilities,
+  osReserveMb,
   parseMetricSeries,
+  planMemory,
   renderMemoryChart,
-  chartTimeLabel,
+  sumSeries,
+  usagePercent,
+  workerCount,
 };

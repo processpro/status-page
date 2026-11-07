@@ -5,6 +5,7 @@ const { renderShell } = require('./pages');
 const {
   MEMORY_RED,
   clampPercent,
+  formatMegabytes,
   formatPercent,
   renderMemoryChart,
 } = require('./vitals-eval');
@@ -41,18 +42,62 @@ function ageLabel(snapshot, error) {
     : `Read at ${when} UTC. Refreshes every 5 minutes.`;
 }
 
+function planCapacityText(plan) {
+  const cache = `Including cache ${formatPercent(plan.cacheHour)}`;
+  const incomplete = plan.memoryIncomplete
+    ? 'Some apps did not return memory, so this total is short.'
+    : '';
+  const each = plan.workers > 1 ? ` on each of ${plan.workers} instances` : '';
+  const reserve = plan.osReserveMb == null
+    ? ''
+    : `${formatMegabytes(plan.osReserveMb)} reserved for the operating system${plan.memoryMb == null ? '' : ` · ${formatMegabytes(plan.memoryMb)} plan from Azure`}`;
+  if (plan.appMemoryMb == null && plan.memoryMb == null) {
+    return { usage: 'Plan size and app memory were not returned by Azure.', reserve, cache, incomplete };
+  }
+  if (plan.appMemoryMb == null) {
+    return {
+      usage: `${formatMegabytes(plan.memoryMb)} plan from Azure${each}. App memory was not returned by Azure.`,
+      reserve,
+      cache,
+      incomplete,
+    };
+  }
+  if (plan.appCapacityMb == null) {
+    return {
+      usage: `${formatMegabytes(plan.appMemoryMb)} in apps. Azure did not return a plan size.`,
+      reserve,
+      cache,
+      incomplete,
+    };
+  }
+  const freeMb = plan.appCapacityMb - plan.appMemoryMb;
+  const room = freeMb >= 0 ? `${formatMegabytes(freeMb)} free for apps` : `${formatMegabytes(Math.abs(freeMb))} over the app limit`;
+  return {
+    usage: `${formatMegabytes(plan.appMemoryMb)} of ${formatMegabytes(plan.appCapacityMb)} for apps · ${room}${each}`,
+    reserve,
+    cache,
+    incomplete,
+  };
+}
+
 function planCard(plan) {
   const href = `/internal/vitals/plans/${encodeURIComponent(plan.resourceGroup)}/${encodeURIComponent(plan.name)}`;
+  const capacity = planCapacityText(plan);
+  const instances = plan.workers > 1 ? ` · ${plan.workers} instances` : '';
   return `<a class="vital-card ${plan.memoryLevel}" href="${href}">
     <div class="vital-card-top">
       <div>
         <strong>${escapeHtml(plan.name)}</strong>
-        <div class="muted">${escapeHtml(plan.location)} · ${escapeHtml(plan.sku || 'App Service')}</div>
+        <div class="muted">${escapeHtml(plan.location)} · ${escapeHtml(plan.sku || 'App Service')}${escapeHtml(instances)}</div>
       </div>
       <span class="vital-state ${plan.memoryLevel}">${escapeHtml(levelLabel(plan.memoryLevel))}</span>
     </div>
-    <div class="vital-figure">${escapeHtml(formatPercent(plan.memoryHour))} <small>memory, last hour</small></div>
+    <div class="vital-figure">${escapeHtml(formatPercent(plan.memoryHour))} <small>apps, last hour</small></div>
     ${meter(plan.memoryHour, plan.memoryLevel)}
+    <div class="vital-note">${escapeHtml(capacity.usage)}</div>
+    ${capacity.reserve ? `<div class="vital-note">${escapeHtml(capacity.reserve)}</div>` : ''}
+    <div class="vital-note">${escapeHtml(capacity.cache)}</div>
+    ${capacity.incomplete ? `<div class="vital-note">${escapeHtml(capacity.incomplete)}</div>` : ''}
     <div class="vital-cpu ${plan.cpuLevel}">CPU ${escapeHtml(formatPercent(plan.cpuHour))} <small>last hour</small></div>
   </a>`;
 }
@@ -116,14 +161,14 @@ function renderVitalsPage({ email, snapshot, error }) {
     <div class="page-head">
       <div>
         <h1>Vitals</h1>
-        <p class="lede">Memory is the early warning. The line on each bar is 85%. Amber starts at 70%. CPU turns red only when the last hour averages over 40%, or it stays above 80% for 15 minutes. ${escapeHtml(ageLabel(data.fetchedAt ? data : snapshot, error))}</p>
+        <p class="lede">The bar is app memory against the memory left for apps. Azure supplies the plan size and the app memory. 2 GB of that plan is held for the operating system and is not free for more web apps. The line is 85%. Amber starts at 70%. Including cache is Azure’s memory percentage, which also counts Windows file cache. CPU turns red only when the last hour averages over 40%, or it stays above 80% for 15 minutes. ${escapeHtml(ageLabel(data.fetchedAt ? data : snapshot, error))}</p>
       </div>
     </div>
     ${error && !data.plans?.length ? `<p class="form-error">${escapeHtml(error)}</p>` : ''}
     <section class="panel">
       <div class="panel-head">
         <h2>App Service plans</h2>
-        <p>One card per server. Open a card to see which apps are using the memory.</p>
+        <p>One card per plan. The percentage leaves out cache. Open a card to see which apps are using the memory.</p>
       </div>
       <div class="vital-grid">${plans}</div>
     </section>
@@ -142,9 +187,10 @@ function renderVitalsPlanPage({ email, detail, windowKey }) {
   const self = `/internal/vitals/plans/${encodeURIComponent(plan.resourceGroup)}/${encodeURIComponent(plan.name)}`;
   const chart = detail.chart || {
     unit: 'percent',
-    title: 'Server memory',
-    caption: 'Each point is the server’s memory. Time runs left to right. The dashed line is 85%.',
+    title: 'App memory',
+    caption: 'Each point is the apps’ memory as a percent of the memory left for apps, after 2 GB held for the operating system. The dashed line is 85%. Windows file cache is not included.',
   };
+  const capacity = planCapacityText(plan);
   const choice = (label, params, active) => {
     const cls = active ? 'window active' : 'window';
     return `<a class="${cls}" href="${escapeHtml(queryHref(self, { window: windowKey, ...params }))}">${escapeHtml(label)}</a>`;
@@ -162,7 +208,7 @@ function renderVitalsPlanPage({ email, detail, windowKey }) {
       <div>
         <p class="eyebrow"><a class="text-link" href="/internal/vitals">Back</a></p>
         <h1>${escapeHtml(plan.name)}</h1>
-        <p class="lede">${escapeHtml(plan.location || '')} ${plan.sku ? `· ${escapeHtml(plan.sku)}` : ''} · memory last hour ${escapeHtml(formatPercent(plan.memoryHour))}.</p>
+        <p class="lede">${escapeHtml(plan.location || '')}${plan.sku ? ` · ${escapeHtml(plan.sku)}` : ''}. ${escapeHtml(formatPercent(plan.memoryHour))} apps, last hour. ${escapeHtml(capacity.usage)}${capacity.reserve ? ` ${escapeHtml(capacity.reserve)}` : ''} ${escapeHtml(capacity.cache)}${capacity.incomplete ? ` ${escapeHtml(capacity.incomplete)}` : ''}</p>
       </div>
       <nav class="windows">${windowLinks(queryHref(self, { app: detail.selectedApp, measure: detail.measure === 'cpu' ? 'cpu' : '' }), windowKey)}</nav>
     </div>
@@ -172,13 +218,13 @@ function renderVitalsPlanPage({ email, detail, windowKey }) {
         <p>${escapeHtml(chart.caption || '')}</p>
       </div>
       <nav class="windows">
-        ${choice('Server memory', {}, !detail.selectedApp && detail.measure !== 'cpu')}
+        ${choice('App memory', {}, !detail.selectedApp && detail.measure !== 'cpu')}
         ${choice('Server CPU', { measure: 'cpu' }, !detail.selectedApp && detail.measure === 'cpu')}
       </nav>
       ${renderMemoryChart(detail.series, { unit: chart.unit, span: windowKey, limit: chart.unit === 'percent' ? MEMORY_RED : null })}
     </section>
     <section class="panel">
-      <div class="panel-head"><h2>Apps on this server</h2><p>Select an app to put its memory or CPU on the chart. The last-hour memory is listed beside the name.</p></div>
+      <div class="panel-head"><h2>Apps on this server</h2><p>Select an app to put its memory or CPU on the chart. The last-hour figure is that app’s working set from Azure. The card adds these up.</p></div>
       <div class="table-wrap"><table><thead><tr><th>App</th><th>Memory, last hour</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="3">No apps on this plan.</td></tr>'}</tbody></table></div>
     </section>`;
   return renderShell({ title: plan.name, active: 'vitals', email, body });
