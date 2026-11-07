@@ -37,13 +37,75 @@ function capabilityList(body) {
   return [];
 }
 
+function capabilityName(item) {
+  return String(item?.properties?.name || item?.name || '');
+}
+
+function capabilityValue(item) {
+  if (item?.properties && Object.prototype.hasOwnProperty.call(item.properties, 'value')) {
+    return item.properties.value;
+  }
+  return item?.value;
+}
+
 function memoryMbFromCapabilities(capabilities) {
-  const match = (capabilities || []).find((item) => String(item?.name || '').toLowerCase() === 'memory');
-  const value = Number(match?.value);
+  const match = (capabilities || []).find((item) => capabilityName(item).toLowerCase() === 'memory');
+  const value = Number(capabilityValue(match));
   if (!Number.isFinite(value) || value <= 0) {
     return null;
   }
   return value;
+}
+
+// Azure's plan capabilities call returns scale-out, not RAM. These are the
+// published sizes for the SKU name on the plan resource.
+const PUBLISHED_MEMORY_MB = {
+  b1: 1792,
+  s1: 1792,
+  p1: 1792,
+  b2: 3584,
+  s2: 3584,
+  p2: 3584,
+  b3: 7168,
+  s3: 7168,
+  p3: 7168,
+  p1v2: 3584,
+  p2v2: 7168,
+  p3v2: 14336,
+  p0v3: 4096,
+  p1v3: 8192,
+  p1mv3: 16384,
+  p2v3: 16384,
+  p2mv3: 32768,
+  p3v3: 32768,
+  p3mv3: 65536,
+  p4mv3: 131072,
+  p5mv3: 262144,
+  p0v4: 4096,
+  p1v4: 8192,
+  p1mv4: 16384,
+  p2v4: 16384,
+  p2mv4: 32768,
+  p3v4: 32768,
+  p3mv4: 65536,
+  p4mv4: 131072,
+  p5mv4: 262144,
+  i1: 3584,
+  i2: 7168,
+  i3: 14336,
+  i1v2: 8192,
+  i1mv2: 16384,
+  i2v2: 16384,
+  i2mv2: 32768,
+  i3v2: 32768,
+  i3mv2: 65536,
+  f1: 1024,
+  d1: 1024,
+};
+
+function publishedMemoryMb(sku) {
+  const key = String(sku || '').toLowerCase();
+  return PUBLISHED_MEMORY_MB[key] ?? null;
 }
 
 function positiveCount(value) {
@@ -271,6 +333,7 @@ module.exports = {
   memoryLevel,
   memoryMbFromCapabilities,
   osReserveMb,
+  publishedMemoryMb,
   parseMetricSeries,
   planMemory,
   renderMemoryChart,

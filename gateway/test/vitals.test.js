@@ -11,6 +11,7 @@ const {
   memoryLevel,
   memoryMbFromCapabilities,
   parseMetricSeries,
+  publishedMemoryMb,
   planMemory,
   renderMemoryChart,
   sumSeries,
@@ -100,8 +101,15 @@ describe('vitals thresholds', () => {
 
   it('uses Azure plan memory and app working set, and leaves cache out of the percentage', () => {
     assert.equal(memoryMbFromCapabilities([{ name: 'CPU', value: '8' }, { name: 'Memory', value: '32768' }]), 32768);
+    assert.equal(memoryMbFromCapabilities([{ name: 'ScaleOut', properties: { name: 'Memory', value: '16384' } }]), 16384);
+    assert.equal(memoryMbFromCapabilities([{ name: 'ScaleOut', properties: { name: 'ScaleOut', value: 'Enabled' } }]), null);
     assert.equal(memoryMbFromCapabilities([{ name: 'Memory', value: '32768 MB' }]), null);
     assert.equal(memoryMbFromCapabilities([]), null);
+    assert.equal(publishedMemoryMb('P3v4'), 32768);
+    assert.equal(publishedMemoryMb('p2mv4'), 32768);
+    assert.equal(publishedMemoryMb('B2'), 3584);
+    assert.equal(publishedMemoryMb('P0v3'), 4096);
+    assert.equal(publishedMemoryMb('unknown'), null);
     assert.equal(workerCount({
       properties: { currentNumberOfWorkers: 2, numberOfWorkers: 4 },
       sku: { capacity: 1 },

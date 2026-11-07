@@ -9,6 +9,7 @@ const {
   memoryLevel,
   memoryMbFromCapabilities,
   parseMetricSeries,
+  publishedMemoryMb,
   planMemory,
   sumSeries,
   workerCount,
@@ -277,7 +278,12 @@ async function currentMemoryMb(plan) {
       return fresh;
     }
   } catch {
-    // Keep the last size Azure returned. A failed call is not a size.
+    // The capabilities call often returns scale-out only. Use the published size below.
+  }
+  const published = publishedMemoryMb(plan.sku);
+  if (published != null) {
+    plan.memoryMb = published;
+    return published;
   }
   return plan.memoryMb ?? null;
 }
